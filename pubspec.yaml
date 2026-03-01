@@ -12,6 +12,9 @@ dependencies:
   cupertino_icons: ^1.0.8
   shared_preferences: ^2.2.0
   flutter_tts: ^3.8.3
+  flutter_background_service: ^5.0.10
+  flutter_local_notifications: ^17.2.4
+  device_info_plus: ^10.1.2
 
 dev_dependencies:
   flutter_test:

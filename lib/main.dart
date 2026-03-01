@@ -4,8 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'models.dart';
+import 'background_service.dart';
+import 'package:flutter_background_service/flutter_background_service.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await initializeService();
   runApp(const IntervallerApp());
 }
 
@@ -15,7 +19,7 @@ class IntervallerApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Intervaller',
+      title: 'InterEqui',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepOrange),
         useMaterial3: true,
@@ -273,7 +277,7 @@ class _PlanEditorScreenState extends State<PlanEditorScreen> {
   void _addInterval() {
     final nameController = TextEditingController(text: 'Interval');
     final minController = TextEditingController(text: '0');
-    final secController = TextEditingController(text: '30');
+    final secController = TextEditingController(text: '0');
 
     final List<String> shortcuts = ["Trot", "Walk", "Canter", "Left", "Right"];
 
@@ -347,7 +351,7 @@ class _PlanEditorScreenState extends State<PlanEditorScreen> {
                 int minutes = int.tryParse(minController.text) ?? 0;
                 int seconds = int.tryParse(secController.text) ?? 0;
                 int totalSeconds = (minutes * 60) + seconds;
-                if (totalSeconds <= 0) totalSeconds = 30; // fallback default
+                if (totalSeconds <= 0) return;
 
                 setState(() {
                   _intervals.add(
@@ -448,93 +452,54 @@ class TrainingScreen extends StatefulWidget {
 
 class _TrainingScreenState extends State<TrainingScreen> {
   int _currentIntervalIndex = 0;
-  late int _secondsRemaining;
-  Timer? _timer;
+  int _secondsRemaining = 0;
   bool _isPaused = false;
-  final FlutterTts _flutterTts = FlutterTts();
+  StreamSubscription? _serviceSubscription;
 
   @override
   void initState() {
     super.initState();
     _secondsRemaining = widget.plan.intervals[0].duration.inSeconds;
-    _initTtsAndStart();
+    _startBackgroundWorkout();
   }
 
-  Future<void> _initTtsAndStart() async {
-    final prefs = await SharedPreferences.getInstance();
-    final name = prefs.getString('tts_voice_name');
-    final locale = prefs.getString('tts_voice_locale');
-    if (name != null && locale != null) {
-      await _flutterTts.setVoice({"name": name, "locale": locale});
-    }
-    _speakCurrentInterval();
-    _startTimer();
-  }
-
-  Future<void> _speakCurrentInterval() async {
-    final interval = widget.plan.intervals[_currentIntervalIndex];
-    final duration = interval.duration;
-
-    String durationText = '';
-    if (duration.inMinutes > 0) {
-      durationText +=
-          '${duration.inMinutes} minute${duration.inMinutes > 1 ? 's' : ''}';
-      if (duration.inSeconds % 60 > 0) {
-        durationText += ' and ${duration.inSeconds % 60} seconds';
-      }
-    } else {
-      durationText = '${duration.inSeconds} seconds';
+  void _startBackgroundWorkout() async {
+    final service = FlutterBackgroundService();
+    bool isRunning = await service.isRunning();
+    if (!isRunning) {
+      await service.startService();
     }
 
-    await _flutterTts.speak('${interval.name} for $durationText');
-  }
+    service.invoke('startWorkout', {"plan": widget.plan.toJson()});
 
-  void _startTimer() {
-    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (!_isPaused) {
+    _serviceSubscription = service.on('update').listen((event) {
+      if (mounted) {
         setState(() {
-          if (_secondsRemaining > 0) {
-            _secondsRemaining--;
-
-            // Minute countdown
-            if (_secondsRemaining > 0 && _secondsRemaining % 60 == 0) {
-              int mins = _secondsRemaining ~/ 60;
-              _flutterTts.speak('$mins minute${mins > 1 ? 's' : ''} remaining');
-            }
-
-            // Final seconds countdown
-            if (_secondsRemaining <= 3 && _secondsRemaining > 0) {
-              _flutterTts.speak(_secondsRemaining.toString());
-            }
-          } else {
-            _nextInterval();
-          }
+          _currentIntervalIndex = event!['index'];
+          _secondsRemaining = event['seconds'];
+          _isPaused = event['isPaused'];
         });
       }
     });
-  }
 
-  void _nextInterval() {
-    if (_currentIntervalIndex < widget.plan.intervals.length - 1) {
-      _currentIntervalIndex++;
-      _secondsRemaining =
-          widget.plan.intervals[_currentIntervalIndex].duration.inSeconds;
-      _speakCurrentInterval();
-    } else {
-      _timer?.cancel();
-      _flutterTts.speak("Workout complete. Great job!");
-      _showCompletionDialog();
-    }
+    service.on('complete').listen((event) {
+      if (mounted) {
+        _showCompletionDialog();
+      }
+    });
   }
 
   void _skipInterval() {
-    setState(() {
-      _nextInterval();
-    });
+    FlutterBackgroundService().invoke('skip');
+  }
+
+  void _togglePause() {
+    FlutterBackgroundService().invoke('pauseResume');
   }
 
   Future<bool> _confirmStop() async {
     setState(() => _isPaused = true);
+    // Note: We might want to pause the service here too if it's not already
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -557,6 +522,9 @@ class _TrainingScreenState extends State<TrainingScreen> {
         ],
       ),
     );
+    if (confirmed == true) {
+      FlutterBackgroundService().invoke('stopService');
+    }
     return confirmed ?? false;
   }
 
@@ -588,8 +556,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
 
   @override
   void dispose() {
-    _timer?.cancel();
-    _flutterTts.stop();
+    _serviceSubscription?.cancel();
     super.dispose();
   }
 
@@ -626,7 +593,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   ElevatedButton(
-                    onPressed: () => setState(() => _isPaused = !_isPaused),
+                    onPressed: _togglePause,
                     child: Text(_isPaused ? 'Resume' : 'Pause'),
                   ),
                   const SizedBox(width: 20),

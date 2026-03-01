@@ -1,4 +1,4 @@
-package com.example.intervaller;
+package com.arianesline.interequi;
 
 import io.flutter.embedding.android.FlutterActivity;
 

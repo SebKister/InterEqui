@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"from PIL import Image; img = Image.open\\(''c:/Users/Sebastien/StudioProjects/Intervaller/assets/icon/icon.png''\\); print\\(img.size\\)\")",
+      "Bash(flutter config --no-enable-web)"
+    ]
+  }
+}
