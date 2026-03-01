@@ -106,6 +106,21 @@ class _PlanListScreenState extends State<PlanListScreen> {
     }
   }
 
+  void _editPlan(int index) async {
+    final updatedPlan = await Navigator.push<TrainingPlan>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => PlanEditorScreen(existingPlan: _plans[index]),
+      ),
+    );
+    if (updatedPlan != null) {
+      setState(() {
+        _plans[index] = updatedPlan;
+      });
+      _savePlans();
+    }
+  }
+
   Future<void> _confirmDelete(int index) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -130,6 +145,21 @@ class _PlanListScreenState extends State<PlanListScreen> {
     if (confirmed == true) {
       setState(() {
         _plans.removeAt(index);
+      });
+      _savePlans();
+    }
+  }
+
+  void _viewPlan(int index) async {
+    final updatedPlan = await Navigator.push<TrainingPlan>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => PlanDetailScreen(plan: _plans[index]),
+      ),
+    );
+    if (updatedPlan != null) {
+      setState(() {
+        _plans[index] = updatedPlan;
       });
       _savePlans();
     }
@@ -165,26 +195,99 @@ class _PlanListScreenState extends State<PlanListScreen> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       IconButton(
+                        icon: const Icon(Icons.edit_outlined),
+                        tooltip: 'Edit',
+                        onPressed: () => _editPlan(index),
+                      ),
+                      IconButton(
                         icon: const Icon(Icons.delete_outline),
+                        tooltip: 'Delete',
                         onPressed: () => _confirmDelete(index),
                       ),
-                      const Icon(Icons.play_arrow),
+                      IconButton(
+                        icon: const Icon(Icons.play_arrow),
+                        tooltip: 'Start',
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  TrainingScreen(plan: plan),
+                            ),
+                          );
+                        },
+                      ),
                     ],
                   ),
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => TrainingScreen(plan: plan),
-                      ),
-                    );
-                  },
+                  onTap: () => _viewPlan(index),
                 );
               },
             ),
       floatingActionButton: FloatingActionButton(
         onPressed: _addPlan,
         child: const Icon(Icons.add),
+      ),
+    );
+  }
+}
+
+class PlanDetailScreen extends StatelessWidget {
+  final TrainingPlan plan;
+
+  const PlanDetailScreen({super.key, required this.plan});
+
+  String _formatDuration(int totalSeconds) {
+    final minutes = (totalSeconds / 60).floor();
+    final seconds = totalSeconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(plan.name),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.edit),
+            tooltip: 'Edit plan',
+            onPressed: () async {
+              final updatedPlan = await Navigator.push<TrainingPlan>(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => PlanEditorScreen(existingPlan: plan),
+                ),
+              );
+              if (updatedPlan != null && context.mounted) {
+                Navigator.pop(context, updatedPlan);
+              }
+            },
+          ),
+        ],
+      ),
+      body: ListView.builder(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        itemCount: plan.intervals.length,
+        itemBuilder: (context, index) {
+          final interval = plan.intervals[index];
+          return ListTile(
+            leading: CircleAvatar(child: Text('${index + 1}')),
+            title: Text(interval.name),
+            subtitle: Text(_formatDuration(interval.duration.inSeconds)),
+          );
+        },
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => TrainingScreen(plan: plan),
+            ),
+          );
+        },
+        icon: const Icon(Icons.play_arrow),
+        label: const Text('Start Workout'),
       ),
     );
   }
@@ -260,20 +363,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
 }
 
 class PlanEditorScreen extends StatefulWidget {
-  const PlanEditorScreen({super.key});
+  final TrainingPlan? existingPlan;
+
+  const PlanEditorScreen({super.key, this.existingPlan});
 
   @override
   State<PlanEditorScreen> createState() => _PlanEditorScreenState();
 }
 
 class _PlanEditorScreenState extends State<PlanEditorScreen> {
-  final _nameController = TextEditingController();
-  final List<TrainingInterval> _intervals = [];
+  late final TextEditingController _nameController;
+  late List<TrainingInterval> _intervals;
 
-  void _addInterval() {
-    final nameController = TextEditingController(text: 'Interval');
-    final minController = TextEditingController(text: '0');
-    final secController = TextEditingController(text: '30');
+  @override
+  void initState() {
+    super.initState();
+    _nameController =
+        TextEditingController(text: widget.existingPlan?.name ?? '');
+    _intervals = widget.existingPlan?.intervals.toList() ?? [];
+  }
+
+  void _showIntervalDialog({int? editIndex}) {
+    final existing = editIndex != null ? _intervals[editIndex] : null;
+    final nameController =
+        TextEditingController(text: existing?.name ?? 'Interval');
+    final existingSeconds = existing?.duration.inSeconds ?? 30;
+    final minController =
+        TextEditingController(text: '${existingSeconds ~/ 60}');
+    final secController =
+        TextEditingController(text: '${existingSeconds % 60}');
 
     final List<String> shortcuts = ["Trot", "Walk", "Canter", "Left", "Right"];
 
@@ -281,7 +399,7 @@ class _PlanEditorScreenState extends State<PlanEditorScreen> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Add Interval'),
+          title: Text(editIndex != null ? 'Edit Interval' : 'Add Interval'),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -289,7 +407,8 @@ class _PlanEditorScreenState extends State<PlanEditorScreen> {
               children: [
                 TextField(
                   controller: nameController,
-                  decoration: const InputDecoration(labelText: 'Activity Name'),
+                  decoration:
+                      const InputDecoration(labelText: 'Activity Name'),
                 ),
                 const SizedBox(height: 10),
                 Wrap(
@@ -298,8 +417,8 @@ class _PlanEditorScreenState extends State<PlanEditorScreen> {
                     return ActionChip(
                       label: Text(shortcutName),
                       onPressed: () {
-                        if (shortcutName == "Left" || shortcutName == "Right") {
-                          // If the name is exactly default "Interval", replace it, otherwise append.
+                        if (shortcutName == "Left" ||
+                            shortcutName == "Right") {
                           if (nameController.text == 'Interval' ||
                               nameController.text.trim().isEmpty) {
                             nameController.text = shortcutName;
@@ -320,7 +439,8 @@ class _PlanEditorScreenState extends State<PlanEditorScreen> {
                     Expanded(
                       child: TextField(
                         controller: minController,
-                        decoration: const InputDecoration(labelText: 'Minutes'),
+                        decoration:
+                            const InputDecoration(labelText: 'Minutes'),
                         keyboardType: TextInputType.number,
                       ),
                     ),
@@ -328,7 +448,8 @@ class _PlanEditorScreenState extends State<PlanEditorScreen> {
                     Expanded(
                       child: TextField(
                         controller: secController,
-                        decoration: const InputDecoration(labelText: 'Seconds'),
+                        decoration:
+                            const InputDecoration(labelText: 'Seconds'),
                         keyboardType: TextInputType.number,
                       ),
                     ),
@@ -347,21 +468,25 @@ class _PlanEditorScreenState extends State<PlanEditorScreen> {
                 int minutes = int.tryParse(minController.text) ?? 0;
                 int seconds = int.tryParse(secController.text) ?? 0;
                 int totalSeconds = (minutes * 60) + seconds;
-                if (totalSeconds <= 0) totalSeconds = 30; // fallback default
+                if (totalSeconds <= 0) totalSeconds = 30;
+
+                final interval = TrainingInterval(
+                  name: nameController.text.isNotEmpty
+                      ? nameController.text
+                      : 'Interval',
+                  duration: Duration(seconds: totalSeconds),
+                );
 
                 setState(() {
-                  _intervals.add(
-                    TrainingInterval(
-                      name: nameController.text.isNotEmpty
-                          ? nameController.text
-                          : 'Interval',
-                      duration: Duration(seconds: totalSeconds),
-                    ),
-                  );
+                  if (editIndex != null) {
+                    _intervals[editIndex] = interval;
+                  } else {
+                    _intervals.add(interval);
+                  }
                 });
                 Navigator.pop(context);
               },
-              child: const Text('Add'),
+              child: Text(editIndex != null ? 'Save' : 'Add'),
             ),
           ],
         );
@@ -379,7 +504,8 @@ class _PlanEditorScreenState extends State<PlanEditorScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Create Plan'),
+        title:
+            Text(widget.existingPlan != null ? 'Edit Plan' : 'Create Plan'),
         actions: [
           IconButton(
             icon: const Icon(Icons.save),
@@ -388,7 +514,7 @@ class _PlanEditorScreenState extends State<PlanEditorScreen> {
                 Navigator.pop(
                   context,
                   TrainingPlan(
-                    id: DateTime.now().toString(),
+                    id: widget.existingPlan?.id ?? DateTime.now().toString(),
                     name: _nameController.text,
                     intervals: _intervals,
                   ),
@@ -423,12 +549,13 @@ class _PlanEditorScreenState extends State<PlanEditorScreen> {
                         setState(() => _intervals.removeAt(index));
                       },
                     ),
+                    onTap: () => _showIntervalDialog(editIndex: index),
                   );
                 },
               ),
             ),
             ElevatedButton(
-              onPressed: _addInterval,
+              onPressed: () => _showIntervalDialog(),
               child: const Text('Add Interval'),
             ),
           ],
