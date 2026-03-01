@@ -110,6 +110,21 @@ class _PlanListScreenState extends State<PlanListScreen> {
     }
   }
 
+  void _editPlan(int index) async {
+    final updated = await Navigator.push<TrainingPlan>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => PlanEditorScreen(plan: _plans[index]),
+      ),
+    );
+    if (updated != null) {
+      setState(() {
+        _plans[index] = updated;
+      });
+      _savePlans();
+    }
+  }
+
   Future<void> _confirmDelete(int index) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -168,6 +183,10 @@ class _PlanListScreenState extends State<PlanListScreen> {
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      IconButton(
+                        icon: const Icon(Icons.edit_outlined),
+                        onPressed: () => _editPlan(index),
+                      ),
                       IconButton(
                         icon: const Icon(Icons.delete_outline),
                         onPressed: () => _confirmDelete(index),
@@ -264,20 +283,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
 }
 
 class PlanEditorScreen extends StatefulWidget {
-  const PlanEditorScreen({super.key});
+  final TrainingPlan? plan;
+  const PlanEditorScreen({super.key, this.plan});
 
   @override
   State<PlanEditorScreen> createState() => _PlanEditorScreenState();
 }
 
 class _PlanEditorScreenState extends State<PlanEditorScreen> {
-  final _nameController = TextEditingController();
-  final List<TrainingInterval> _intervals = [];
+  late final TextEditingController _nameController;
+  late final List<TrainingInterval> _intervals;
 
-  void _addInterval() {
-    final nameController = TextEditingController(text: 'Interval');
-    final minController = TextEditingController(text: '0');
-    final secController = TextEditingController(text: '0');
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController(text: widget.plan?.name ?? '');
+    _intervals = widget.plan?.intervals.toList() ?? [];
+  }
+
+  void _showIntervalDialog({int? editIndex}) {
+    final existing = editIndex != null ? _intervals[editIndex] : null;
+    final nameController = TextEditingController(
+      text: existing?.name ?? 'Interval',
+    );
+    final minController = TextEditingController(
+      text: existing != null ? existing.duration.inMinutes.toString() : '0',
+    );
+    final secController = TextEditingController(
+      text: existing != null
+          ? (existing.duration.inSeconds % 60).toString()
+          : '0',
+    );
 
     final List<String> shortcuts = ["Trot", "Walk", "Canter", "Left", "Right"];
 
@@ -285,7 +321,7 @@ class _PlanEditorScreenState extends State<PlanEditorScreen> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Add Interval'),
+          title: Text(editIndex != null ? 'Edit Interval' : 'Add Interval'),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -303,7 +339,6 @@ class _PlanEditorScreenState extends State<PlanEditorScreen> {
                       label: Text(shortcutName),
                       onPressed: () {
                         if (shortcutName == "Left" || shortcutName == "Right") {
-                          // If the name is exactly default "Interval", replace it, otherwise append.
                           if (nameController.text == 'Interval' ||
                               nameController.text.trim().isEmpty) {
                             nameController.text = shortcutName;
@@ -353,19 +388,22 @@ class _PlanEditorScreenState extends State<PlanEditorScreen> {
                 int totalSeconds = (minutes * 60) + seconds;
                 if (totalSeconds <= 0) return;
 
+                final interval = TrainingInterval(
+                  name: nameController.text.isNotEmpty
+                      ? nameController.text
+                      : 'Interval',
+                  duration: Duration(seconds: totalSeconds),
+                );
                 setState(() {
-                  _intervals.add(
-                    TrainingInterval(
-                      name: nameController.text.isNotEmpty
-                          ? nameController.text
-                          : 'Interval',
-                      duration: Duration(seconds: totalSeconds),
-                    ),
-                  );
+                  if (editIndex != null) {
+                    _intervals[editIndex] = interval;
+                  } else {
+                    _intervals.add(interval);
+                  }
                 });
                 Navigator.pop(context);
               },
-              child: const Text('Add'),
+              child: Text(editIndex != null ? 'Save' : 'Add'),
             ),
           ],
         );
@@ -381,9 +419,10 @@ class _PlanEditorScreenState extends State<PlanEditorScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isEditing = widget.plan != null;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Create Plan'),
+        title: Text(isEditing ? 'Edit Plan' : 'Create Plan'),
         actions: [
           IconButton(
             icon: const Icon(Icons.save),
@@ -392,7 +431,7 @@ class _PlanEditorScreenState extends State<PlanEditorScreen> {
                 Navigator.pop(
                   context,
                   TrainingPlan(
-                    id: DateTime.now().toString(),
+                    id: widget.plan?.id ?? DateTime.now().toString(),
                     name: _nameController.text,
                     intervals: _intervals,
                   ),
@@ -418,21 +457,20 @@ class _PlanEditorScreenState extends State<PlanEditorScreen> {
                   final interval = _intervals[index];
                   return ListTile(
                     title: Text(interval.name),
-                    subtitle: Text(
-                      _formatDuration(interval.duration.inSeconds),
-                    ),
+                    subtitle: Text(_formatDuration(interval.duration.inSeconds)),
                     trailing: IconButton(
                       icon: const Icon(Icons.delete),
                       onPressed: () {
                         setState(() => _intervals.removeAt(index));
                       },
                     ),
+                    onTap: () => _showIntervalDialog(editIndex: index),
                   );
                 },
               ),
             ),
             ElevatedButton(
-              onPressed: _addInterval,
+              onPressed: () => _showIntervalDialog(),
               child: const Text('Add Interval'),
             ),
           ],
