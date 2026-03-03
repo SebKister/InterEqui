@@ -82,7 +82,6 @@ class GaitService {
   static const int kSampleRate = 100;
   static const int kBufferSize = 256; // power of 2 for FFT
   static const int kOverlapSamples = 128; // 50% overlap
-  static const double kHaltThreshold = 0.3;
   static const int kDebounceCount = 2;
 
   StreamSubscription<AccelerometerEvent>? _accelSubscription;
