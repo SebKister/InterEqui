@@ -47,3 +47,6 @@ app.*.map.json
 # Signing secrets — never commit these
 /android/key.properties
 /android/upload-keystore.jks
+
+# Claude local configuration
+.claude/settings.local.json
