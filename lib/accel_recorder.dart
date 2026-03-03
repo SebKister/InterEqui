@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:sensors_plus/sensors_plus.dart';
 import 'package:path_provider/path_provider.dart';
@@ -61,9 +62,11 @@ class AccelRecorder {
         .toIso8601String()
         .replaceAll(':', '-')
         .replaceAll('.', '-');
-    final file = File('${dir.path}/gait_data_$timestamp.csv');
-    await file.writeAsString(_csvLines.join('\n'));
+    final csvContent = _csvLines.join('\n');
     _csvLines.clear();
+    final compressed = gzip.encode(utf8.encode(csvContent));
+    final file = File('${dir.path}/gait_data_$timestamp.csv.gz');
+    await file.writeAsBytes(compressed);
     return file;
   }
 

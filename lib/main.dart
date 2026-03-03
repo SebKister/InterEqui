@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:file_picker/file_picker.dart';
 import 'models.dart';
 import 'background_service.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
@@ -131,6 +133,55 @@ class _PlanListScreenState extends State<PlanListScreen> {
     }
   }
 
+  Future<void> _exportPlan(TrainingPlan plan) async {
+    final dir = await getApplicationDocumentsDirectory();
+    final safeName = plan.name.replaceAll(RegExp(r'[^\w\s-]'), '').replaceAll(' ', '_');
+    final file = File('${dir.path}/$safeName.json');
+    final jsonStr = const JsonEncoder.withIndent('  ').convert(plan.toJson());
+    await file.writeAsString(jsonStr);
+    await Share.shareXFiles(
+      [XFile(file.path)],
+      subject: plan.name,
+    );
+  }
+
+  Future<void> _importPlan() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.any,
+    );
+    if (result == null || result.files.isEmpty) return;
+
+    final filePath = result.files.single.path;
+    if (filePath == null) return;
+
+    try {
+      final content = await File(filePath).readAsString();
+      final decoded = json.decode(content);
+      final plan = TrainingPlan.fromJson(decoded);
+      // Give it a fresh id to avoid collisions
+      final imported = TrainingPlan(
+        id: DateTime.now().toString(),
+        name: plan.name,
+        intervals: plan.intervals,
+      );
+      setState(() {
+        _plans.add(imported);
+      });
+      _savePlans();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Imported "${imported.name}"')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to import plan. Invalid file format.')),
+        );
+      }
+    }
+  }
+
   Future<void> _confirmDelete(int index) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -167,6 +218,11 @@ class _PlanListScreenState extends State<PlanListScreen> {
         title: const Text('My Training Plans'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.file_open),
+            tooltip: 'Import Plan',
+            onPressed: _importPlan,
+          ),
+          IconButton(
             icon: const Icon(Icons.sensors),
             tooltip: 'Gait Detector',
             onPressed: () {
@@ -199,6 +255,11 @@ class _PlanListScreenState extends State<PlanListScreen> {
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      IconButton(
+                        icon: const Icon(Icons.share_outlined),
+                        tooltip: 'Export Plan',
+                        onPressed: () => _exportPlan(plan),
+                      ),
                       IconButton(
                         icon: const Icon(Icons.edit_outlined),
                         onPressed: () => _editPlan(index),
@@ -552,21 +613,21 @@ class _TrainingScreenState extends State<TrainingScreen> {
     _localTimer?.cancel();
     _localTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!_isPaused && mounted) {
-        setState(() {
-          if (_secondsRemaining > 0) {
+        if (_secondsRemaining > 0) {
+          setState(() {
             _secondsRemaining--;
-          } else {
-            if (_currentIntervalIndex < widget.plan.intervals.length - 1) {
-              _currentIntervalIndex++;
-              _secondsRemaining =
-                  widget.plan.intervals[_currentIntervalIndex].duration.inSeconds;
-              _updateRecordingLabel(_currentIntervalIndex);
-            } else {
-              _localTimer?.cancel();
-              _showCompletionDialog();
-            }
-          }
-        });
+          });
+        } else if (_currentIntervalIndex < widget.plan.intervals.length - 1) {
+          setState(() {
+            _currentIntervalIndex++;
+            _secondsRemaining =
+                widget.plan.intervals[_currentIntervalIndex].duration.inSeconds;
+          });
+          _updateRecordingLabel(_currentIntervalIndex);
+        } else {
+          _localTimer?.cancel();
+          _showCompletionDialog(); // async — must not be inside setState
+        }
       }
     });
   }
