@@ -133,6 +133,13 @@ class GaitService {
     ) - 9.81;
     _accelBuffer.add(magnitude);
 
+    // Prevent unbounded growth if processing lags behind sensor rate.
+    // Keep only the most recent samples needed for windowed processing.
+    final int maxBufferLength = kBufferSize + kOverlapSamples;
+    if (_accelBuffer.length > maxBufferLength) {
+      final int excess = _accelBuffer.length - maxBufferLength;
+      _accelBuffer.removeRange(0, excess);
+    }
     if (_accelBuffer.length >= kBufferSize && !_processing) {
       _processBuffer();
     }
