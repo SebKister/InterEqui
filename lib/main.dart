@@ -1,14 +1,17 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:share_plus/share_plus.dart';
 import 'models.dart';
 import 'background_service.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'gait_models.dart';
 import 'gait_service.dart';
 import 'gait_screen.dart';
+import 'accel_recorder.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -512,12 +515,25 @@ class _TrainingScreenState extends State<TrainingScreen> {
   StreamSubscription<GaitReading>? _gaitSubscription;
   GaitReading? _latestGaitReading;
 
+  final AccelRecorder _accelRecorder = AccelRecorder();
+
   @override
   void initState() {
     super.initState();
     _secondsRemaining = widget.plan.intervals[0].duration.inSeconds;
     _startBackgroundWorkout();
     _startGaitDetection();
+    _startDataRecording();
+  }
+
+  void _startDataRecording() {
+    _accelRecorder.start();
+    _updateRecordingLabel(0);
+  }
+
+  void _updateRecordingLabel(int intervalIndex) {
+    final intervalName = widget.plan.intervals[intervalIndex].name;
+    _accelRecorder.setLabel(gaitLabelFromIntervalName(intervalName));
   }
 
   void _startGaitDetection() {
@@ -544,6 +560,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
               _currentIntervalIndex++;
               _secondsRemaining =
                   widget.plan.intervals[_currentIntervalIndex].duration.inSeconds;
+              _updateRecordingLabel(_currentIntervalIndex);
             } else {
               _localTimer?.cancel();
               _showCompletionDialog();
@@ -562,8 +579,12 @@ class _TrainingScreenState extends State<TrainingScreen> {
     // When updates arrive they resync the local timer with the background state.
     _serviceSubscription = service.on('update').listen((event) {
       if (mounted) {
+        final newIndex = event!['index'] as int;
+        if (newIndex != _currentIntervalIndex) {
+          _updateRecordingLabel(newIndex);
+        }
         setState(() {
-          _currentIntervalIndex = event!['index'];
+          _currentIntervalIndex = newIndex;
           _secondsRemaining = event['seconds'];
           _isPaused = event['isPaused'];
         });
@@ -598,18 +619,26 @@ class _TrainingScreenState extends State<TrainingScreen> {
         _secondsRemaining =
             widget.plan.intervals[_currentIntervalIndex].duration.inSeconds;
       });
+      _updateRecordingLabel(_currentIntervalIndex);
       _startLocalTimer();
     }
     FlutterBackgroundService().invoke('skip');
   }
 
   void _togglePause() {
+    final wasPaused = _isPaused;
     setState(() => _isPaused = !_isPaused);
     FlutterBackgroundService().invoke('pauseResume');
+    if (!wasPaused) {
+      _accelRecorder.setLabel(null);
+    } else {
+      _updateRecordingLabel(_currentIntervalIndex);
+    }
   }
 
   Future<bool> _confirmStop() async {
     setState(() => _isPaused = true);
+    _accelRecorder.setLabel(null);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -621,6 +650,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
           TextButton(
             onPressed: () {
               setState(() => _isPaused = false);
+              _updateRecordingLabel(_currentIntervalIndex);
               Navigator.pop(context, false);
             },
             child: const Text('Resume'),
@@ -635,18 +665,82 @@ class _TrainingScreenState extends State<TrainingScreen> {
     if (confirmed == true) {
       _localTimer?.cancel();
       FlutterBackgroundService().invoke('stopService');
+      final file = await _accelRecorder.stop();
+      if (mounted && file != null) {
+        _showExportDialog(file);
+        return false; // export dialog handles navigation
+      }
     }
     return confirmed ?? false;
   }
 
-  void _showCompletionDialog() {
+  void _showCompletionDialog() async {
+    final file = await _accelRecorder.stop();
+    if (!mounted) return;
+
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
         title: const Text('Workout Complete!'),
-        content: const Text('Great job!'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Great job!'),
+            if (file != null) ...[
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  const Icon(Icons.check_circle, color: Colors.green, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '${_accelRecorder.sampleCount} accelerometer samples recorded',
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
         actions: [
+          if (file != null)
+            TextButton.icon(
+              onPressed: () {
+                Share.shareXFiles([XFile(file.path)]);
+              },
+              icon: const Icon(Icons.share),
+              label: const Text('Export CSV'),
+            ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context); // Pop dialog
+              Navigator.pop(context); // Pop training screen
+            },
+            child: const Text('Done'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showExportDialog(File file) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('Data Recorded'),
+        content: Text(
+          '${_accelRecorder.sampleCount} accelerometer samples were recorded.',
+        ),
+        actions: [
+          TextButton.icon(
+            onPressed: () {
+              Share.shareXFiles([XFile(file.path)]);
+            },
+            icon: const Icon(Icons.share),
+            label: const Text('Export CSV'),
+          ),
           TextButton(
             onPressed: () {
               Navigator.pop(context); // Pop dialog
@@ -674,6 +768,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
       _gaitService.stop();
     }
     _gaitService.dispose();
+    _accelRecorder.dispose();
     super.dispose();
   }
 
@@ -718,6 +813,32 @@ class _TrainingScreenState extends State<TrainingScreen> {
                     style: TextStyle(color: gaitColor(_latestGaitReading!.gait)),
                   ),
                 ),
+              if (_accelRecorder.isRecording) ...[
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.fiber_manual_record,
+                      color: gaitLabelFromIntervalName(currentInterval.name) != null
+                          ? Colors.red
+                          : Colors.grey,
+                      size: 12,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      gaitLabelFromIntervalName(currentInterval.name) != null
+                          ? 'Recording: ${gaitLabelFromIntervalName(currentInterval.name)}'
+                          : 'Recording paused',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: gaitLabelFromIntervalName(currentInterval.name) != null
+                            ? Colors.red
+                            : Colors.grey,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               const SizedBox(height: 24),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
