@@ -6,6 +6,9 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'models.dart';
 import 'background_service.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
+import 'gait_models.dart';
+import 'gait_service.dart';
+import 'gait_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -160,6 +163,16 @@ class _PlanListScreenState extends State<PlanListScreen> {
       appBar: AppBar(
         title: const Text('My Training Plans'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.sensors),
+            tooltip: 'Gait Detector',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const GaitDetectorScreen()),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () {
@@ -494,11 +507,25 @@ class _TrainingScreenState extends State<TrainingScreen> {
   bool _isPaused = false;
   StreamSubscription? _serviceSubscription;
 
+  final GaitService _gaitService = GaitService();
+  StreamSubscription<GaitReading>? _gaitSubscription;
+  GaitReading? _latestGaitReading;
+
   @override
   void initState() {
     super.initState();
     _secondsRemaining = widget.plan.intervals[0].duration.inSeconds;
     _startBackgroundWorkout();
+    _startGaitDetection();
+  }
+
+  void _startGaitDetection() {
+    _gaitService.start();
+    _gaitSubscription = _gaitService.gaitStream.listen((reading) {
+      if (mounted) {
+        setState(() => _latestGaitReading = reading);
+      }
+    });
   }
 
   void _startBackgroundWorkout() async {
@@ -595,6 +622,11 @@ class _TrainingScreenState extends State<TrainingScreen> {
   @override
   void dispose() {
     _serviceSubscription?.cancel();
+    _gaitSubscription?.cancel();
+    if (_gaitService.isRunning) {
+      _gaitService.stop();
+    }
+    _gaitService.dispose();
     super.dispose();
   }
 
@@ -626,7 +658,20 @@ class _TrainingScreenState extends State<TrainingScreen> {
                 'Next: ${_currentIntervalIndex < widget.plan.intervals.length - 1 ? widget.plan.intervals[_currentIntervalIndex + 1].name : "Finish"}',
                 style: Theme.of(context).textTheme.titleLarge,
               ),
-              const SizedBox(height: 40),
+              const SizedBox(height: 16),
+              if (_latestGaitReading != null)
+                Chip(
+                  avatar: Icon(
+                    gaitIcon(_latestGaitReading!.gait),
+                    color: gaitColor(_latestGaitReading!.gait),
+                    size: 18,
+                  ),
+                  label: Text(
+                    gaitLabel(_latestGaitReading!.gait),
+                    style: TextStyle(color: gaitColor(_latestGaitReading!.gait)),
+                  ),
+                ),
+              const SizedBox(height: 24),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
