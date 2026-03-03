@@ -506,6 +506,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
   int _secondsRemaining = 0;
   bool _isPaused = false;
   StreamSubscription? _serviceSubscription;
+  Timer? _localTimer;
 
   final GaitService _gaitService = GaitService();
   StreamSubscription<GaitReading>? _gaitSubscription;
@@ -528,15 +529,37 @@ class _TrainingScreenState extends State<TrainingScreen> {
     });
   }
 
+  // Local timer drives the countdown directly so the UI never depends solely
+  // on background service IPC. Background service 'update' events resync it
+  // when they arrive (keeping TTS/notification state authoritative).
+  void _startLocalTimer() {
+    _localTimer?.cancel();
+    _localTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!_isPaused && mounted) {
+        setState(() {
+          if (_secondsRemaining > 0) {
+            _secondsRemaining--;
+          } else {
+            if (_currentIntervalIndex < widget.plan.intervals.length - 1) {
+              _currentIntervalIndex++;
+              _secondsRemaining =
+                  widget.plan.intervals[_currentIntervalIndex].duration.inSeconds;
+            } else {
+              _localTimer?.cancel();
+              _showCompletionDialog();
+            }
+          }
+        });
+      }
+    });
+  }
+
   void _startBackgroundWorkout() async {
     final service = FlutterBackgroundService();
     bool isRunning = await service.isRunning();
-    if (!isRunning) {
-      await service.startService();
-    }
 
-    service.invoke('startWorkout', {"plan": widget.plan.toJson()});
-
+    // Subscribe to events BEFORE invoking startWorkout so we don't miss anything.
+    // When updates arrive they resync the local timer with the background state.
     _serviceSubscription = service.on('update').listen((event) {
       if (mounted) {
         setState(() {
@@ -544,27 +567,49 @@ class _TrainingScreenState extends State<TrainingScreen> {
           _secondsRemaining = event['seconds'];
           _isPaused = event['isPaused'];
         });
+        _startLocalTimer();
       }
     });
 
     service.on('complete').listen((event) {
       if (mounted) {
+        _localTimer?.cancel();
         _showCompletionDialog();
       }
     });
+
+    if (!isRunning) {
+      final readyFuture = service.on('ready').first;
+      await service.startService();
+      await readyFuture.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => null,
+      );
+    }
+
+    service.invoke('startWorkout', {"plan": widget.plan.toJson()});
+    _startLocalTimer();
   }
 
   void _skipInterval() {
+    if (_currentIntervalIndex < widget.plan.intervals.length - 1) {
+      setState(() {
+        _currentIntervalIndex++;
+        _secondsRemaining =
+            widget.plan.intervals[_currentIntervalIndex].duration.inSeconds;
+      });
+      _startLocalTimer();
+    }
     FlutterBackgroundService().invoke('skip');
   }
 
   void _togglePause() {
+    setState(() => _isPaused = !_isPaused);
     FlutterBackgroundService().invoke('pauseResume');
   }
 
   Future<bool> _confirmStop() async {
     setState(() => _isPaused = true);
-    // Note: We might want to pause the service here too if it's not already
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -588,6 +633,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
       ),
     );
     if (confirmed == true) {
+      _localTimer?.cancel();
       FlutterBackgroundService().invoke('stopService');
     }
     return confirmed ?? false;
@@ -622,6 +668,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
   @override
   void dispose() {
     _serviceSubscription?.cancel();
+    _localTimer?.cancel();
     _gaitSubscription?.cancel();
     if (_gaitService.isRunning) {
       _gaitService.stop();
