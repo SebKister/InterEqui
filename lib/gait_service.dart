@@ -92,6 +92,8 @@ class GaitService {
   GaitType _candidateGait = GaitType.unknown;
   int _candidateCount = 0;
   bool _processing = false;
+  int _generation = 0; // incremented on stop/dispose to discard stale results
+  bool _disposed = false;
 
   DateTime? _sessionStart;
   final List<GaitTransition> _transitions = [];
@@ -138,6 +140,7 @@ class GaitService {
 
   Future<void> _processBuffer() async {
     _processing = true;
+    final gen = _generation;
     final bufferCopy = Float64List.fromList(
       _accelBuffer.sublist(0, kBufferSize),
     );
@@ -151,7 +154,10 @@ class GaitService {
           'sampleRate': kSampleRate,
         }),
       );
-      _applyClassification(result);
+      // Discard result if stop() or dispose() was called while awaiting
+      if (_generation == gen && !_disposed) {
+        _applyClassification(result);
+      }
     } catch (_) {
       // Isolate failed, skip this window
     } finally {
@@ -201,6 +207,7 @@ class GaitService {
   }
 
   GaitSession stop() {
+    _generation++;
     _accelSubscription?.cancel();
     _accelSubscription = null;
 
@@ -223,6 +230,8 @@ class GaitService {
   }
 
   void dispose() {
+    _disposed = true;
+    _generation++;
     _accelSubscription?.cancel();
     _gaitController.close();
     _transitionController.close();

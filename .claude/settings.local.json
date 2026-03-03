@@ -9,7 +9,8 @@
       "WebFetch(domain:github.com)",
       "Bash(flutter pub get)",
       "Bash(flutter analyze)",
-      "Bash(flutter analyze lib/gait_screen.dart lib/gait_service.dart lib/gait_models.dart)"
+      "Bash(flutter analyze lib/gait_screen.dart lib/gait_service.dart lib/gait_models.dart)",
+      "Bash(flutter analyze lib/gait_service.dart)"
     ]
   }
 }
