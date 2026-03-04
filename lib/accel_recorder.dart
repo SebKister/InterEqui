@@ -80,10 +80,9 @@ class AccelRecorder {
         .toIso8601String()
         .replaceAll(':', '-')
         .replaceAll('.', '-');
-    final compressed = gzip.encode(await tempFile!.readAsBytes());
-    await tempFile.delete();
     final file = File('${dir.path}/gait_data_$timestamp.csv.gz');
-    await file.writeAsBytes(compressed);
+    await tempFile!.openRead().transform(gzip.encoder).pipe(file.openWrite());
+    await tempFile.delete();
     return file;
   }
 
