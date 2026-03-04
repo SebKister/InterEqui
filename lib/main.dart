@@ -600,13 +600,14 @@ class _TrainingScreenState extends State<TrainingScreen> {
     _accelRecorder.setLabel(gaitLabelFromIntervalName(intervalName));
   }
 
-  void _startGaitDetection() {
-    _gaitService.start();
+  Future<void> _startGaitDetection() async {
+    // Subscribe before start so no readings are missed.
     _gaitSubscription = _gaitService.gaitStream.listen((reading) {
       if (mounted) {
         setState(() => _latestGaitReading = reading);
       }
     });
+    await _gaitService.start();
   }
 
   // Local timer drives the countdown directly so the UI never depends solely

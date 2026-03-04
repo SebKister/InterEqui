@@ -1,98 +1,27 @@
 import 'dart:async';
-import 'dart:isolate';
-import 'dart:math';
-import 'dart:typed_data';
 import 'package:sensors_plus/sensors_plus.dart';
-import 'package:fftea/fftea.dart';
 import 'gait_models.dart';
+import 'gait_classifier.dart';
 
-// Must be top-level for Isolate.run
-Map<String, dynamic> _classifyGaitIsolate(Map<String, dynamic> params) {
-  final buffer = params['buffer'] as Float64List;
-  final sampleRate = params['sampleRate'] as int;
-  final bufferSize = buffer.length;
-
-  // Apply Hanning window
-  final window = Window.hanning(bufferSize);
-  final windowed = window.applyWindowReal(buffer);
-
-  // Compute FFT
-  final fft = FFT(bufferSize);
-  final freq = fft.realFft(windowed);
-  final magnitudes = freq.discardConjugates().magnitudes();
-
-  // Compute RMS of the original signal
-  double sumSq = 0;
-  for (final v in buffer) {
-    sumSq += v * v;
-  }
-  final rms = sqrt(sumSq / bufferSize);
-
-  // Find dominant frequency in equine gait range (0.5-4.0 Hz)
-  final freqResolution = sampleRate / bufferSize;
-  final minBin = (0.5 / freqResolution).ceil();
-  final maxBin = (4.0 / freqResolution).floor().clamp(0, magnitudes.length - 1);
-
-  int peakIndex = minBin;
-  double peakMagnitude = 0;
-  for (int i = minBin; i <= maxBin; i++) {
-    if (magnitudes[i] > peakMagnitude) {
-      peakMagnitude = magnitudes[i];
-      peakIndex = i;
-    }
-  }
-
-  final dominantFreq = peakIndex * freqResolution;
-
-  // Classify based on frequency + amplitude
-  String gaitName;
-  double confidence;
-
-  if (rms < 0.3) {
-    gaitName = 'halt';
-    confidence = 0.9;
-  } else if (dominantFreq >= 0.8 && dominantFreq <= 1.6 && rms < 1.5) {
-    gaitName = 'walk';
-    confidence = _freqConfidence(dominantFreq, 1.2, 0.4);
-  } else if (dominantFreq >= 1.2 && dominantFreq <= 2.0 && rms >= 1.0 && rms < 3.5) {
-    gaitName = 'trot';
-    confidence = _freqConfidence(dominantFreq, 1.55, 0.4);
-  } else if (dominantFreq >= 1.4 && dominantFreq <= 2.8 && rms >= 2.0) {
-    gaitName = 'canter';
-    confidence = _freqConfidence(dominantFreq, 2.0, 0.6);
-  } else {
-    gaitName = 'unknown';
-    confidence = 0.3;
-  }
-
-  return {
-    'gait': gaitName,
-    'confidence': confidence,
-    'dominantFrequency': dominantFreq,
-    'amplitude': rms,
-  };
-}
-
-double _freqConfidence(double freq, double center, double bandwidth) {
-  final distance = (freq - center).abs();
-  return (1.0 - (distance / bandwidth)).clamp(0.3, 1.0);
-}
-
+/// Streams real-time gait classifications by feeding accelerometer data
+/// through a TFLite model in a sliding window.
+///
+/// If the model files haven't been bundled yet (the user hasn't trained a
+/// model), the service starts silently and emits no readings.
 class GaitService {
-  static const int kSampleRate = 100;
-  static const int kBufferSize = 256; // power of 2 for FFT
-  static const int kOverlapSamples = 128; // 50% overlap
-  static const int kDebounceCount = 2;
+  static const int _sampleRate = 100;
+  static const int _stride = 100; // classify every 1 s
+  static const int _debounceCount = 2;
+
+  final GaitClassifier _classifier = GaitClassifier();
 
   StreamSubscription<AccelerometerEvent>? _accelSubscription;
-  final List<double> _accelBuffer = [];
+  final List<List<double>> _buffer = [];
+  int _samplesSinceLastClassify = 0;
 
   GaitType _currentGait = GaitType.unknown;
   GaitType _candidateGait = GaitType.unknown;
   int _candidateCount = 0;
-  bool _processing = false;
-  int _generation = 0; // incremented on stop/dispose to discard stale results
-  bool _disposed = false;
 
   DateTime? _sessionStart;
   final List<GaitTransition> _transitions = [];
@@ -106,9 +35,22 @@ class GaitService {
   Stream<GaitTransition> get transitionStream => _transitionController.stream;
   GaitType get currentGait => _currentGait;
   bool get isRunning => _accelSubscription != null;
+  bool get isModelLoaded => _classifier.isReady;
 
-  void start() {
+  /// Loads the TFLite model from assets. Safe to call more than once.
+  Future<void> initialize() async {
+    if (!_classifier.isReady) {
+      await _classifier.initialize();
+    }
+  }
+
+  /// Starts the accelerometer and begins classifying.
+  ///
+  /// Calls [initialize] automatically if the model hasn't been loaded yet.
+  Future<void> start() async {
     if (_accelSubscription != null) return;
+
+    await initialize();
 
     _sessionStart = DateTime.now();
     _lastGaitChangeTime = _sessionStart;
@@ -117,86 +59,64 @@ class GaitService {
     _candidateCount = 0;
     _transitions.clear();
     _gaitDurations.clear();
-    _accelBuffer.clear();
-    _processing = false;
+    _buffer.clear();
+    _samplesSinceLastClassify = 0;
 
     _accelSubscription = accelerometerEventStream(
-      samplingPeriod: const Duration(milliseconds: 10), // ~100 Hz
+      samplingPeriod: const Duration(milliseconds: 1000 ~/ _sampleRate),
     ).listen(_onAccelData);
   }
 
   void _onAccelData(AccelerometerEvent event) {
-    // Orientation-agnostic: use vector magnitude minus gravity
-    final magnitude = sqrt(
-      event.x * event.x + event.y * event.y + event.z * event.z,
-    ) - 9.81;
-    _accelBuffer.add(magnitude);
+    _buffer.add([event.x, event.y, event.z]);
+    _samplesSinceLastClassify++;
 
-    // Prevent unbounded growth if processing lags behind sensor rate.
-    // Keep only the most recent samples needed for windowed processing.
-    final int maxBufferLength = kBufferSize + kOverlapSamples;
-    if (_accelBuffer.length > maxBufferLength) {
-      final int excess = _accelBuffer.length - maxBufferLength;
-      _accelBuffer.removeRange(0, excess);
+    // Keep buffer bounded to avoid unbounded memory growth.
+    final maxLen = GaitClassifier.windowSize * 2;
+    if (_buffer.length > maxLen) {
+      _buffer.removeRange(0, _buffer.length - maxLen);
     }
-    if (_accelBuffer.length >= kBufferSize && !_processing) {
-      _processBuffer();
+
+    if (_buffer.length >= GaitClassifier.windowSize &&
+        _samplesSinceLastClassify >= _stride) {
+      _samplesSinceLastClassify = 0;
+      _classify();
     }
   }
 
-  Future<void> _processBuffer() async {
-    _processing = true;
-    final gen = _generation;
-    final bufferCopy = Float64List.fromList(
-      _accelBuffer.sublist(0, kBufferSize),
+  void _classify() {
+    if (!_classifier.isReady) return;
+
+    final window = _buffer.sublist(
+      _buffer.length - GaitClassifier.windowSize,
     );
-    // Slide window
-    _accelBuffer.removeRange(0, kOverlapSamples);
+    final result = _classifier.classify(window);
+    if (result == null) return;
 
-    try {
-      final result = await Isolate.run(
-        () => _classifyGaitIsolate({
-          'buffer': bufferCopy,
-          'sampleRate': kSampleRate,
-        }),
-      );
-      // Discard result if stop() or dispose() was called while awaiting
-      if (_generation == gen && !_disposed) {
-        _applyClassification(result);
-      }
-    } catch (_) {
-      // Isolate failed, skip this window
-    } finally {
-      _processing = false;
-    }
-  }
-
-  void _applyClassification(Map<String, dynamic> result) {
-    final detectedGait = GaitType.values.byName(result['gait']);
+    final gaitType = _labelToGaitType(result.label);
     final reading = GaitReading(
       timestamp: DateTime.now(),
-      gait: detectedGait,
-      confidence: result['confidence'],
-      dominantFrequency: result['dominantFrequency'],
-      amplitude: result['amplitude'],
+      gait: gaitType,
+      confidence: result.confidence,
     );
 
     _gaitController.add(reading);
 
-    // Debounce: require consecutive matching classifications
-    if (detectedGait == _candidateGait) {
+    // Debounce: require consecutive matching classifications before
+    // committing a gait transition.
+    if (gaitType == _candidateGait) {
       _candidateCount++;
     } else {
-      _candidateGait = detectedGait;
+      _candidateGait = gaitType;
       _candidateCount = 1;
     }
 
-    if (_candidateCount >= kDebounceCount && _candidateGait != _currentGait) {
+    if (_candidateCount >= _debounceCount && _candidateGait != _currentGait) {
       final now = DateTime.now();
       if (_lastGaitChangeTime != null) {
         final elapsed = now.difference(_lastGaitChangeTime!);
         _gaitDurations[_currentGait] =
-          (_gaitDurations[_currentGait] ?? Duration.zero) + elapsed;
+            (_gaitDurations[_currentGait] ?? Duration.zero) + elapsed;
       }
 
       final transition = GaitTransition(
@@ -212,18 +132,29 @@ class GaitService {
     }
   }
 
+  static GaitType _labelToGaitType(String label) {
+    switch (label) {
+      case 'walk':
+        return GaitType.walk;
+      case 'trot':
+        return GaitType.trot;
+      case 'canter':
+        return GaitType.canter;
+      default:
+        return GaitType.unknown;
+    }
+  }
+
   GaitSession stop() {
-    _generation++;
     _accelSubscription?.cancel();
     _accelSubscription = null;
 
     final endTime = DateTime.now();
 
-    // Record duration of the final gait segment
     if (_lastGaitChangeTime != null) {
       final elapsed = endTime.difference(_lastGaitChangeTime!);
       _gaitDurations[_currentGait] =
-        (_gaitDurations[_currentGait] ?? Duration.zero) + elapsed;
+          (_gaitDurations[_currentGait] ?? Duration.zero) + elapsed;
     }
 
     return GaitSession(
@@ -236,10 +167,9 @@ class GaitService {
   }
 
   void dispose() {
-    _disposed = true;
-    _generation++;
     _accelSubscription?.cancel();
     _gaitController.close();
     _transitionController.close();
+    _classifier.dispose();
   }
 }
