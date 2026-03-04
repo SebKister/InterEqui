@@ -590,8 +590,8 @@ class _TrainingScreenState extends State<TrainingScreen> {
     _startDataRecording();
   }
 
-  void _startDataRecording() {
-    _accelRecorder.start();
+  Future<void> _startDataRecording() async {
+    await _accelRecorder.start();
     _updateRecordingLabel(0);
   }
 
