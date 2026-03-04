@@ -136,7 +136,10 @@ class _PlanListScreenState extends State<PlanListScreen> {
   Future<void> _exportPlan(TrainingPlan plan) async {
     final dir = await getApplicationDocumentsDirectory();
     final safeName = plan.name.replaceAll(RegExp(r'[^\w\s-]'), '').replaceAll(' ', '_');
-    final file = File('${dir.path}/$safeName.json');
+    final baseName = safeName.isNotEmpty
+        ? safeName
+        : 'plan_${DateTime.now().millisecondsSinceEpoch}';
+    final file = File('${dir.path}/$baseName.json');
     final jsonStr = const JsonEncoder.withIndent('  ').convert(plan.toJson());
     await file.writeAsString(jsonStr);
     await Share.shareXFiles(
