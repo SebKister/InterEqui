@@ -705,6 +705,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
     _accelRecorder.setLabel(null);
     final confirmed = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => AlertDialog(
         title: const Text('Stop Workout?'),
         content: const Text(
@@ -877,32 +878,43 @@ class _TrainingScreenState extends State<TrainingScreen> {
                     style: TextStyle(color: gaitColor(_latestGaitReading!.gait)),
                   ),
                 ),
-              if (_accelRecorder.isRecording) ...[
-                const SizedBox(height: 8),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.fiber_manual_record,
-                      color: gaitLabelFromIntervalName(currentInterval.name) != null
-                          ? Colors.red
-                          : Colors.grey,
-                      size: 12,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      gaitLabelFromIntervalName(currentInterval.name) != null
-                          ? 'Recording: ${gaitLabelFromIntervalName(currentInterval.name)}'
-                          : 'Recording paused',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: gaitLabelFromIntervalName(currentInterval.name) != null
-                            ? Colors.red
-                            : Colors.grey,
-                      ),
-                    ),
-                  ],
+              if (_accelRecorder.isRecording)
+                Builder(
+                  builder: (context) {
+                    final gaitLabel =
+                        gaitLabelFromIntervalName(currentInterval.name);
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SizedBox(height: 8),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.fiber_manual_record,
+                              color: gaitLabel != null ? Colors.red : Colors.grey,
+                              size: 12,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              gaitLabel != null
+                                  ? 'Recording: $gaitLabel'
+                                  : 'Recording paused',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(
+                                    color: gaitLabel != null
+                                        ? Colors.red
+                                        : Colors.grey,
+                                  ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    );
+                  },
                 ),
-              ],
               const SizedBox(height: 24),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
