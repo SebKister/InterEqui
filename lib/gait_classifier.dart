@@ -50,16 +50,22 @@ class GaitClassifier {
       return true;
     } on FlutterError {
       // Asset not bundled yet — expected before the user trains a model.
+      _interpreter?.close();
+      _interpreter = null;
       _ready = false;
       return false;
     } on FormatException catch (e) {
       // Malformed norm_params.json — this is a real bug, surface it.
       debugPrint('GaitClassifier: bad norm_params — $e');
+      _interpreter?.close();
+      _interpreter = null;
       _ready = false;
       return false;
     } catch (e) {
       // Corrupted .tflite, TFLite runtime error, etc.
       debugPrint('GaitClassifier: failed to initialise — $e');
+      _interpreter?.close();
+      _interpreter = null;
       _ready = false;
       return false;
     }
