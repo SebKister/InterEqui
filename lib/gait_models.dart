@@ -12,33 +12,23 @@ class GaitReading {
   final DateTime timestamp;
   final GaitType gait;
   final double confidence;
-  /// Only set when using the FFT classifier; null for ML inference.
-  final double? dominantFrequency;
-  /// Only set when using the FFT classifier; null for ML inference.
-  final double? amplitude;
 
   GaitReading({
     required this.timestamp,
     required this.gait,
     required this.confidence,
-    this.dominantFrequency,
-    this.amplitude,
   });
 
   Map<String, dynamic> toJson() => {
     'timestamp': timestamp.millisecondsSinceEpoch,
     'gait': gait.name,
     'confidence': confidence,
-    if (dominantFrequency != null) 'dominantFrequency': dominantFrequency,
-    if (amplitude != null) 'amplitude': amplitude,
   };
 
   factory GaitReading.fromJson(Map<String, dynamic> json) => GaitReading(
     timestamp: DateTime.fromMillisecondsSinceEpoch(json['timestamp']),
     gait: GaitType.values.byName(json['gait']),
     confidence: (json['confidence'] as num).toDouble(),
-    dominantFrequency: (json['dominantFrequency'] as num?)?.toDouble(),
-    amplitude: (json['amplitude'] as num?)?.toDouble(),
   );
 }
 

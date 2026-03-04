@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 
@@ -33,9 +34,32 @@ class GaitClassifier {
       _means = List<double>.from(params['means'] as List);
       _stds = List<double>.from(params['stds'] as List);
 
+      if (_means.length != 3 || _stds.length != 3) {
+        throw FormatException(
+          'norm_params.json: expected 3 means and 3 stds, '
+          'got ${_means.length} means and ${_stds.length} stds',
+        );
+      }
+      if (_stds.any((s) => s == 0)) {
+        throw const FormatException(
+          'norm_params.json: standard deviations must be non-zero',
+        );
+      }
+
       _ready = true;
       return true;
-    } catch (_) {
+    } on FlutterError {
+      // Asset not bundled yet — expected before the user trains a model.
+      _ready = false;
+      return false;
+    } on FormatException catch (e) {
+      // Malformed norm_params.json — this is a real bug, surface it.
+      debugPrint('GaitClassifier: bad norm_params — $e');
+      _ready = false;
+      return false;
+    } catch (e) {
+      // Corrupted .tflite, TFLite runtime error, etc.
+      debugPrint('GaitClassifier: failed to initialise — $e');
       _ready = false;
       return false;
     }

@@ -1,5 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'gait_models.dart';
 import 'gait_service.dart';
 
@@ -309,6 +312,63 @@ class GaitSessionSummaryScreen extends StatelessWidget {
     return '+${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 
+  Future<void> _exportSession(BuildContext context) async {
+    final totalMs = session.totalDuration.inMilliseconds;
+
+    // Header
+    final date = session.startTime;
+    final dateStr =
+        '${date.day.toString().padLeft(2, '0')}/'
+        '${date.month.toString().padLeft(2, '0')}/'
+        '${date.year} '
+        '${date.hour.toString().padLeft(2, '0')}:'
+        '${date.minute.toString().padLeft(2, '0')}';
+    final buf = StringBuffer()
+      ..writeln('Gait Session — $dateStr')
+      ..writeln('Duration: ${_formatDuration(session.totalDuration)}')
+      ..writeln();
+
+    // Gait breakdown
+    final sorted = session.gaitDurations.entries
+        .where((e) => e.value.inMilliseconds > 0)
+        .toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    buf.writeln('Gait Breakdown:');
+    for (final e in sorted) {
+      final pct = totalMs > 0
+          ? (e.value.inMilliseconds / totalMs * 100).toStringAsFixed(1)
+          : '0.0';
+      buf.writeln(
+        '  ${gaitLabel(e.key).padRight(10)}'
+        '${_formatDuration(e.value)}  ($pct%)',
+      );
+    }
+    buf.writeln();
+
+    // Transitions
+    if (session.transitions.isNotEmpty) {
+      buf.writeln('Transitions (${session.transitions.length}):');
+      for (final t in session.transitions) {
+        final offset = t.timestamp.difference(session.startTime);
+        buf.writeln(
+          '  ${_formatTimestamp(offset)}  '
+          '${gaitLabel(t.fromGait)} → ${gaitLabel(t.toGait)}',
+        );
+      }
+    }
+
+    // Write file and share
+    final dir = await getApplicationDocumentsDirectory();
+    final ts = session.startTime
+        .toIso8601String()
+        .replaceAll(':', '-')
+        .replaceAll('.', '-');
+    final file = File('${dir.path}/gait_session_$ts.txt');
+    await file.writeAsString(buf.toString());
+    await Share.shareXFiles([XFile(file.path)], subject: 'Gait Session $dateStr');
+  }
+
   @override
   Widget build(BuildContext context) {
     final totalMs = session.totalDuration.inMilliseconds;
@@ -320,7 +380,16 @@ class GaitSessionSummaryScreen extends StatelessWidget {
       ..sort((a, b) => b.value.compareTo(a.value));
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Session Summary')),
+      appBar: AppBar(
+        title: const Text('Session Summary'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.share),
+            tooltip: 'Export session',
+            onPressed: () => _exportSession(context),
+          ),
+        ],
+      ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
