@@ -774,7 +774,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
                 Share.shareXFiles([XFile(file.path)]);
               },
               icon: const Icon(Icons.share),
-              label: const Text('Export CSV'),
+              label: const Text('Export gzipped CSV'),
             ),
           TextButton(
             onPressed: () {
