@@ -738,7 +738,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
     return confirmed ?? false;
   }
 
-  void _showCompletionDialog() async {
+  Future<void> _showCompletionDialog() async {
     final file = await _accelRecorder.stop();
     if (!mounted) return;
 
