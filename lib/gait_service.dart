@@ -16,6 +16,7 @@ class GaitService {
   final GaitClassifier _classifier = GaitClassifier();
 
   StreamSubscription<AccelerometerEvent>? _accelSubscription;
+  bool _running = false;
   final List<List<double>> _buffer = [];
   int _samplesSinceLastClassify = 0;
 
@@ -34,7 +35,7 @@ class GaitService {
   Stream<GaitReading> get gaitStream => _gaitController.stream;
   Stream<GaitTransition> get transitionStream => _transitionController.stream;
   GaitType get currentGait => _currentGait;
-  bool get isRunning => _accelSubscription != null;
+  bool get isRunning => _running;
   bool get isModelLoaded => _classifier.isReady;
 
   /// Loads the TFLite model from assets. Safe to call more than once.
@@ -48,7 +49,7 @@ class GaitService {
   ///
   /// Calls [initialize] automatically if the model hasn't been loaded yet.
   Future<void> start() async {
-    if (_accelSubscription != null) return;
+    if (_running) return;
 
     await initialize();
 
@@ -62,12 +63,14 @@ class GaitService {
     _buffer.clear();
     _samplesSinceLastClassify = 0;
 
+    _running = true;
     _accelSubscription = accelerometerEventStream(
       samplingPeriod: const Duration(milliseconds: 1000 ~/ _sampleRate),
     ).listen(_onAccelData);
   }
 
   void _onAccelData(AccelerometerEvent event) {
+    if (!_running) return;
     _buffer.add([event.x, event.y, event.z]);
     _samplesSinceLastClassify++;
 
@@ -146,6 +149,7 @@ class GaitService {
   }
 
   GaitSession stop() {
+    _running = false;
     _accelSubscription?.cancel();
     _accelSubscription = null;
 
