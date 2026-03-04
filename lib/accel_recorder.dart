@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:sensors_plus/sensors_plus.dart';
@@ -16,7 +15,8 @@ class AccelRecorder {
   static const int _sampleRateMs = 10; // ~100 Hz
 
   StreamSubscription<AccelerometerEvent>? _subscription;
-  final List<String> _csvLines = [];
+  IOSink? _sink;
+  File? _tempFile;
   String? _currentLabel;
   bool _isRecording = false;
   int _sampleCount = 0;
@@ -24,12 +24,18 @@ class AccelRecorder {
   bool get isRecording => _isRecording;
   int get sampleCount => _sampleCount;
 
-  void start() {
+  /// Opens a temporary CSV file and begins streaming samples to it.
+  Future<void> start() async {
     if (_isRecording) return;
     _isRecording = true;
-    _csvLines.clear();
-    _csvLines.add('timestamp_ms,accel_x,accel_y,accel_z,label');
     _sampleCount = 0;
+    _currentLabel = null;
+
+    final dir = await getTemporaryDirectory();
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    _tempFile = File('${dir.path}/accel_$ts.csv');
+    _sink = _tempFile!.openWrite();
+    _sink!.write('timestamp_ms,accel_x,accel_y,accel_z,label\n');
 
     _subscription = accelerometerEventStream(
       samplingPeriod: const Duration(milliseconds: _sampleRateMs),
@@ -45,17 +51,17 @@ class AccelRecorder {
     if (label == null) return;
 
     final timestampMs = DateTime.now().millisecondsSinceEpoch;
-    _csvLines.add(
+    _sink?.write(
       '$timestampMs,'
       '${event.x.toStringAsFixed(4)},'
       '${event.y.toStringAsFixed(4)},'
       '${event.z.toStringAsFixed(4)},'
-      '$label',
+      '$label\n',
     );
     _sampleCount++;
   }
 
-  /// Stops recording and writes CSV to app documents directory.
+  /// Stops recording and writes a compressed CSV to app documents directory.
   /// Returns the File, or null if nothing was recorded.
   Future<File?> stop() async {
     _subscription?.cancel();
@@ -63,16 +69,33 @@ class AccelRecorder {
     _isRecording = false;
     _currentLabel = null;
 
-    if (_sampleCount == 0) return null;
+    if (_sink != null) {
+      await _sink!.flush();
+      await _sink!.close();
+      _sink = null;
+    }
+
+    final tempFile = _tempFile;
+    _tempFile = null;
+
+    if (_sampleCount == 0) {
+      await tempFile?.delete();
+      return null;
+    }
 
     final dir = await getApplicationDocumentsDirectory();
     final timestamp = DateTime.now()
         .toIso8601String()
         .replaceAll(':', '-')
         .replaceAll('.', '-');
+<<<<<<< copilot/sub-pr-4
+    final compressed = gzip.encode(await tempFile!.readAsBytes());
+    await tempFile.delete();
+=======
     final linesToCompress = List<String>.from(_csvLines);
     _csvLines.clear();
     final compressed = await compute(_compressCsvLines, linesToCompress);
+>>>>>>> claude/elegant-sammet
     final file = File('${dir.path}/gait_data_$timestamp.csv.gz');
     await file.writeAsBytes(compressed);
     return file;
@@ -81,5 +104,9 @@ class AccelRecorder {
   void dispose() {
     _subscription?.cancel();
     _subscription = null;
+    // Fire-and-forget: dispose() is synchronous; any buffered bytes are
+    // flushed by the underlying IOSink as it closes.
+    _sink?.close();
+    _sink = null;
   }
 }
