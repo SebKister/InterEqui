@@ -1,5 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'gait_models.dart';
 import 'gait_service.dart';
 
@@ -15,6 +18,7 @@ class _GaitDetectorScreenState extends State<GaitDetectorScreen> {
   StreamSubscription<GaitReading>? _readingSubscription;
 
   bool _isRecording = false;
+  bool? _modelAvailable; // null = still loading
   GaitReading? _latestReading;
   final List<GaitReading> _recentReadings = [];
   static const int _maxRecentReadings = 30;
@@ -23,8 +27,23 @@ class _GaitDetectorScreenState extends State<GaitDetectorScreen> {
   Timer? _elapsedTimer;
   Duration _elapsed = Duration.zero;
 
-  void _startRecording() {
-    _gaitService.start();
+  @override
+  void initState() {
+    super.initState();
+    _checkModel();
+  }
+
+  Future<void> _checkModel() async {
+    await _gaitService.initialize();
+    if (mounted) {
+      setState(() => _modelAvailable = _gaitService.isModelLoaded);
+    }
+  }
+
+  Future<void> _startRecording() async {
+    if (_isRecording) return;
+
+    await _gaitService.start();
     _recordingStart = DateTime.now();
     setState(() {
       _isRecording = true;
@@ -145,23 +164,56 @@ class _GaitDetectorScreenState extends State<GaitDetectorScreen> {
             style: Theme.of(context).textTheme.headlineMedium,
           ),
           const SizedBox(height: 16),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 32),
-            child: Text(
-              'Place your phone in your pocket or on your belt, then tap Start to begin detecting the horse\'s gait.',
-              textAlign: TextAlign.center,
+          if (_modelAvailable == null)
+            const Padding(
+              padding: EdgeInsets.all(32),
+              child: CircularProgressIndicator(),
+            )
+          else if (_modelAvailable == false)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: Column(
+                children: [
+                  const Icon(Icons.model_training, size: 48, color: Colors.grey),
+                  const SizedBox(height: 12),
+                  Text(
+                    'No model available yet',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Record training data during workouts, then run '
+                    'the training notebook to generate a model.\n\n'
+                    'Place gait_classifier.tflite and norm_params.json '
+                    'in assets/models/ and rebuild.',
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            )
+          else ...[
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 32),
+              child: Text(
+                'Place your phone in your pocket or on your belt, '
+                'then tap Start to begin detecting the horse\'s gait.',
+                textAlign: TextAlign.center,
+              ),
             ),
-          ),
-          const SizedBox(height: 40),
-          FilledButton.icon(
-            onPressed: _startRecording,
-            icon: const Icon(Icons.play_arrow),
-            label: const Text('Start'),
-            style: FilledButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-              textStyle: const TextStyle(fontSize: 18),
+            const SizedBox(height: 40),
+            FilledButton.icon(
+              onPressed: _startRecording,
+              icon: const Icon(Icons.play_arrow),
+              label: const Text('Start'),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 32,
+                  vertical: 16,
+                ),
+                textStyle: const TextStyle(fontSize: 18),
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -187,11 +239,6 @@ class _GaitDetectorScreenState extends State<GaitDetectorScreen> {
           ),
           const SizedBox(height: 12),
           if (reading != null) ...[
-            Text(
-              '${reading.dominantFrequency.toStringAsFixed(1)} Hz',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 8),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 48),
               child: LinearProgressIndicator(
@@ -215,9 +262,11 @@ class _GaitDetectorScreenState extends State<GaitDetectorScreen> {
                 child: SizedBox(
                   height: 24,
                   child: Row(
-                    children: _recentReadings.map((r) => Expanded(
-                      child: Container(color: gaitColor(r.gait)),
-                    )).toList(),
+                    children: _recentReadings
+                        .map((r) => Expanded(
+                              child: Container(color: gaitColor(r.gait)),
+                            ))
+                        .toList(),
                   ),
                 ),
               ),
@@ -234,7 +283,10 @@ class _GaitDetectorScreenState extends State<GaitDetectorScreen> {
             label: const Text('Stop'),
             style: FilledButton.styleFrom(
               backgroundColor: Colors.red,
-              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 32,
+                vertical: 16,
+              ),
               textStyle: const TextStyle(fontSize: 18),
             ),
           ),
@@ -260,18 +312,84 @@ class GaitSessionSummaryScreen extends StatelessWidget {
     return '+${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 
+  Future<void> _exportSession(BuildContext context) async {
+    final totalMs = session.totalDuration.inMilliseconds;
+
+    // Header
+    final date = session.startTime;
+    final dateStr =
+        '${date.day.toString().padLeft(2, '0')}/'
+        '${date.month.toString().padLeft(2, '0')}/'
+        '${date.year} '
+        '${date.hour.toString().padLeft(2, '0')}:'
+        '${date.minute.toString().padLeft(2, '0')}';
+    final buf = StringBuffer()
+      ..writeln('Gait Session — $dateStr')
+      ..writeln('Duration: ${_formatDuration(session.totalDuration)}')
+      ..writeln();
+
+    // Gait breakdown
+    final sorted = session.gaitDurations.entries
+        .where((e) => e.value.inMilliseconds > 0)
+        .toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    buf.writeln('Gait Breakdown:');
+    for (final e in sorted) {
+      final pct = totalMs > 0
+          ? (e.value.inMilliseconds / totalMs * 100).toStringAsFixed(1)
+          : '0.0';
+      buf.writeln(
+        '  ${gaitLabel(e.key).padRight(10)}'
+        '${_formatDuration(e.value)}  ($pct%)',
+      );
+    }
+    buf.writeln();
+
+    // Transitions
+    if (session.transitions.isNotEmpty) {
+      buf.writeln('Transitions (${session.transitions.length}):');
+      for (final t in session.transitions) {
+        final offset = t.timestamp.difference(session.startTime);
+        buf.writeln(
+          '  ${_formatTimestamp(offset)}  '
+          '${gaitLabel(t.fromGait)} → ${gaitLabel(t.toGait)}',
+        );
+      }
+    }
+
+    // Write file and share
+    final dir = await getApplicationDocumentsDirectory();
+    final ts = session.startTime
+        .toIso8601String()
+        .replaceAll(':', '-')
+        .replaceAll('.', '-');
+    final file = File('${dir.path}/gait_session_$ts.txt');
+    await file.writeAsString(buf.toString());
+    await Share.shareXFiles([XFile(file.path)], subject: 'Gait Session $dateStr');
+  }
+
   @override
   Widget build(BuildContext context) {
     final totalMs = session.totalDuration.inMilliseconds;
 
     // Filter to gaits that actually have duration
     final gaitEntries = session.gaitDurations.entries
-      .where((e) => e.value.inMilliseconds > 0)
-      .toList()
+        .where((e) => e.value.inMilliseconds > 0)
+        .toList()
       ..sort((a, b) => b.value.compareTo(a.value));
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Session Summary')),
+      appBar: AppBar(
+        title: const Text('Session Summary'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.share),
+            tooltip: 'Export session',
+            onPressed: () => _exportSession(context),
+          ),
+        ],
+      ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -299,15 +417,15 @@ class GaitSessionSummaryScreen extends StatelessWidget {
                         color: gaitColor(e.key),
                         alignment: Alignment.center,
                         child: fraction > 0.1
-                          ? Text(
-                              gaitLabel(e.key),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            )
-                          : null,
+                            ? Text(
+                                gaitLabel(e.key),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              )
+                            : null,
                       ),
                     );
                   }).toList(),
@@ -319,14 +437,17 @@ class GaitSessionSummaryScreen extends StatelessWidget {
           // Gait duration breakdown
           ...gaitEntries.map((e) {
             final pct = totalMs > 0
-              ? (e.value.inMilliseconds / totalMs * 100).toStringAsFixed(0)
-              : '0';
+                ? (e.value.inMilliseconds / totalMs * 100).toStringAsFixed(0)
+                : '0';
             return ListTile(
               leading: Icon(gaitIcon(e.key), color: gaitColor(e.key)),
               title: Text(gaitLabel(e.key)),
               trailing: Text(
                 '${_formatDuration(e.value)}  ($pct%)',
-                style: TextStyle(color: gaitColor(e.key), fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  color: gaitColor(e.key),
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             );
           }),
