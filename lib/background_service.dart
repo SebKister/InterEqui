@@ -50,7 +50,9 @@ Future<bool> onIosBackground(ServiceInstance service) async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
     DartPluginRegistrant.ensureInitialized();
-  } catch (_) {}
+  } catch (e) {
+    debugPrint('DartPluginRegistrant.ensureInitialized() failed in iOS background isolate: $e');
+  }
   return true;
 }
 
@@ -61,7 +63,9 @@ void onStart(ServiceInstance service) async {
   // support background execution (TTS, notifications, prefs) still work.
   try {
     DartPluginRegistrant.ensureInitialized();
-  } catch (_) {}
+  } catch (e) {
+    debugPrint('DartPluginRegistrant.ensureInitialized() failed in background isolate: $e');
+  }
 
   final FlutterTts flutterTts = FlutterTts();
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
