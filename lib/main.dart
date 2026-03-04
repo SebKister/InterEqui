@@ -163,7 +163,7 @@ class _PlanListScreenState extends State<PlanListScreen> {
       final plan = TrainingPlan.fromJson(decoded);
       // Give it a fresh id to avoid collisions
       final imported = TrainingPlan(
-        id: DateTime.now().toString(),
+        id: DateTime.now().microsecondsSinceEpoch.toString(),
         name: plan.name,
         intervals: plan.intervals,
       );
