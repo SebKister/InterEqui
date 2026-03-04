@@ -48,13 +48,24 @@ Future<void> initializeService() async {
 @pragma('vm:entry-point')
 Future<bool> onIosBackground(ServiceInstance service) async {
   WidgetsFlutterBinding.ensureInitialized();
-  DartPluginRegistrant.ensureInitialized();
+  try {
+    DartPluginRegistrant.ensureInitialized();
+  } catch (e) {
+    debugPrint('DartPluginRegistrant.ensureInitialized() failed in iOS background isolate: $e');
+  }
   return true;
 }
 
 @pragma('vm:entry-point')
 void onStart(ServiceInstance service) async {
-  DartPluginRegistrant.ensureInitialized();
+  // Some UI-only plugins (file_picker, share_plus, etc.) throw when
+  // initialised in a background isolate. Catch so the plugins that DO
+  // support background execution (TTS, notifications, prefs) still work.
+  try {
+    DartPluginRegistrant.ensureInitialized();
+  } catch (e) {
+    debugPrint('DartPluginRegistrant.ensureInitialized() failed in background isolate: $e');
+  }
 
   final FlutterTts flutterTts = FlutterTts();
   final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
@@ -67,7 +78,11 @@ void onStart(ServiceInstance service) async {
   Timer? timer;
 
   Future<void> speak(String text) async {
-    await flutterTts.speak(text);
+    try {
+      await flutterTts.speak(text);
+    } catch (e) {
+      debugPrint('TTS speak error: $e');
+    }
   }
 
   String speakDuration(Duration duration) {
@@ -184,11 +199,20 @@ void onStart(ServiceInstance service) async {
     service.stopSelf();
   });
 
-  // Initialize TTS with saved voice (async, after listeners are registered)
-  final prefs = await SharedPreferences.getInstance();
-  final voiceName = prefs.getString('tts_voice_name');
-  final voiceLocale = prefs.getString('tts_voice_locale');
-  if (voiceName != null && voiceLocale != null) {
-    await flutterTts.setVoice({"name": voiceName, "locale": voiceLocale});
+  // Initialize TTS with saved voice (async, after listeners are registered).
+  // Wrapped in try-catch so that 'ready' is always sent even if
+  // SharedPreferences or TTS voice setup fails in the background isolate.
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final voiceName = prefs.getString('tts_voice_name');
+    final voiceLocale = prefs.getString('tts_voice_locale');
+    if (voiceName != null && voiceLocale != null) {
+      await flutterTts.setVoice({"name": voiceName, "locale": voiceLocale});
+    }
+  } catch (e) {
+    debugPrint('Background TTS voice init error: $e');
   }
+
+  // Signal to the UI that the service is ready to receive commands
+  service.invoke('ready');
 }

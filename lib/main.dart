@@ -1,14 +1,19 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:file_picker/file_picker.dart';
 import 'models.dart';
 import 'background_service.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'gait_models.dart';
 import 'gait_service.dart';
 import 'gait_screen.dart';
+import 'accel_recorder.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -128,6 +133,58 @@ class _PlanListScreenState extends State<PlanListScreen> {
     }
   }
 
+  Future<void> _exportPlan(TrainingPlan plan) async {
+    final dir = await getApplicationDocumentsDirectory();
+    final safeName = plan.name.replaceAll(RegExp(r'[^\w\s-]'), '').replaceAll(' ', '_');
+    final baseName = safeName.isNotEmpty
+        ? safeName
+        : 'plan_${DateTime.now().millisecondsSinceEpoch}';
+    final file = File('${dir.path}/$baseName.json');
+    final jsonStr = const JsonEncoder.withIndent('  ').convert(plan.toJson());
+    await file.writeAsString(jsonStr);
+    await Share.shareXFiles(
+      [XFile(file.path)],
+      subject: plan.name,
+    );
+  }
+
+  Future<void> _importPlan() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.any,
+    );
+    if (result == null || result.files.isEmpty) return;
+
+    final filePath = result.files.single.path;
+    if (filePath == null) return;
+
+    try {
+      final content = await File(filePath).readAsString();
+      final decoded = json.decode(content);
+      final plan = TrainingPlan.fromJson(decoded);
+      // Give it a fresh id to avoid collisions
+      final imported = TrainingPlan(
+        id: DateTime.now().microsecondsSinceEpoch.toString(),
+        name: plan.name,
+        intervals: plan.intervals,
+      );
+      setState(() {
+        _plans.add(imported);
+      });
+      _savePlans();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Imported "${imported.name}"')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to import plan. Invalid file format.')),
+        );
+      }
+    }
+  }
+
   Future<void> _confirmDelete(int index) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -164,6 +221,11 @@ class _PlanListScreenState extends State<PlanListScreen> {
         title: const Text('My Training Plans'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.file_open),
+            tooltip: 'Import Plan',
+            onPressed: _importPlan,
+          ),
+          IconButton(
             icon: const Icon(Icons.sensors),
             tooltip: 'Gait Detector',
             onPressed: () {
@@ -196,6 +258,11 @@ class _PlanListScreenState extends State<PlanListScreen> {
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      IconButton(
+                        icon: const Icon(Icons.share_outlined),
+                        tooltip: 'Export Plan',
+                        onPressed: () => _exportPlan(plan),
+                      ),
                       IconButton(
                         icon: const Icon(Icons.edit_outlined),
                         onPressed: () => _editPlan(index),
@@ -512,12 +579,25 @@ class _TrainingScreenState extends State<TrainingScreen> {
   StreamSubscription<GaitReading>? _gaitSubscription;
   GaitReading? _latestGaitReading;
 
+  final AccelRecorder _accelRecorder = AccelRecorder();
+
   @override
   void initState() {
     super.initState();
     _secondsRemaining = widget.plan.intervals[0].duration.inSeconds;
     _startBackgroundWorkout();
     _startGaitDetection();
+    _startDataRecording();
+  }
+
+  Future<void> _startDataRecording() async {
+    await _accelRecorder.start();
+    _updateRecordingLabel(0);
+  }
+
+  void _updateRecordingLabel(int intervalIndex) {
+    final intervalName = widget.plan.intervals[intervalIndex].name;
+    _accelRecorder.setLabel(gaitLabelFromIntervalName(intervalName));
   }
 
   void _startGaitDetection() {
@@ -536,20 +616,21 @@ class _TrainingScreenState extends State<TrainingScreen> {
     _localTimer?.cancel();
     _localTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!_isPaused && mounted) {
-        setState(() {
-          if (_secondsRemaining > 0) {
+        if (_secondsRemaining > 0) {
+          setState(() {
             _secondsRemaining--;
-          } else {
-            if (_currentIntervalIndex < widget.plan.intervals.length - 1) {
-              _currentIntervalIndex++;
-              _secondsRemaining =
-                  widget.plan.intervals[_currentIntervalIndex].duration.inSeconds;
-            } else {
-              _localTimer?.cancel();
-              _showCompletionDialog();
-            }
-          }
-        });
+          });
+        } else if (_currentIntervalIndex < widget.plan.intervals.length - 1) {
+          setState(() {
+            _currentIntervalIndex++;
+            _secondsRemaining =
+                widget.plan.intervals[_currentIntervalIndex].duration.inSeconds;
+          });
+          _updateRecordingLabel(_currentIntervalIndex);
+        } else {
+          _localTimer?.cancel();
+          _showCompletionDialog(); // async — must not be inside setState
+        }
       }
     });
   }
@@ -562,8 +643,12 @@ class _TrainingScreenState extends State<TrainingScreen> {
     // When updates arrive they resync the local timer with the background state.
     _serviceSubscription = service.on('update').listen((event) {
       if (mounted) {
+        final newIndex = event!['index'] as int;
+        if (newIndex != _currentIntervalIndex) {
+          _updateRecordingLabel(newIndex);
+        }
         setState(() {
-          _currentIntervalIndex = event!['index'];
+          _currentIntervalIndex = newIndex;
           _secondsRemaining = event['seconds'];
           _isPaused = event['isPaused'];
         });
@@ -598,20 +683,29 @@ class _TrainingScreenState extends State<TrainingScreen> {
         _secondsRemaining =
             widget.plan.intervals[_currentIntervalIndex].duration.inSeconds;
       });
+      _updateRecordingLabel(_currentIntervalIndex);
       _startLocalTimer();
     }
     FlutterBackgroundService().invoke('skip');
   }
 
   void _togglePause() {
+    final wasPaused = _isPaused;
     setState(() => _isPaused = !_isPaused);
     FlutterBackgroundService().invoke('pauseResume');
+    if (!wasPaused) {
+      _accelRecorder.setLabel(null);
+    } else {
+      _updateRecordingLabel(_currentIntervalIndex);
+    }
   }
 
   Future<bool> _confirmStop() async {
     setState(() => _isPaused = true);
+    _accelRecorder.setLabel(null);
     final confirmed = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => AlertDialog(
         title: const Text('Stop Workout?'),
         content: const Text(
@@ -621,6 +715,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
           TextButton(
             onPressed: () {
               setState(() => _isPaused = false);
+              _updateRecordingLabel(_currentIntervalIndex);
               Navigator.pop(context, false);
             },
             child: const Text('Resume'),
@@ -635,18 +730,82 @@ class _TrainingScreenState extends State<TrainingScreen> {
     if (confirmed == true) {
       _localTimer?.cancel();
       FlutterBackgroundService().invoke('stopService');
+      final file = await _accelRecorder.stop();
+      if (mounted && file != null) {
+        _showExportDialog(file);
+        return false; // export dialog handles navigation
+      }
     }
     return confirmed ?? false;
   }
 
-  void _showCompletionDialog() {
+  Future<void> _showCompletionDialog() async {
+    final file = await _accelRecorder.stop();
+    if (!mounted) return;
+
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
         title: const Text('Workout Complete!'),
-        content: const Text('Great job!'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Great job!'),
+            if (file != null) ...[
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  const Icon(Icons.check_circle, color: Colors.green, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '${_accelRecorder.sampleCount} accelerometer samples recorded',
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
         actions: [
+          if (file != null)
+            TextButton.icon(
+              onPressed: () {
+                Share.shareXFiles([XFile(file.path)]);
+              },
+              icon: const Icon(Icons.share),
+              label: const Text('Export gzipped CSV'),
+            ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context); // Pop dialog
+              Navigator.pop(context); // Pop training screen
+            },
+            child: const Text('Done'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showExportDialog(File file) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('Data Recorded'),
+        content: Text(
+          '${_accelRecorder.sampleCount} accelerometer samples were recorded.',
+        ),
+        actions: [
+          TextButton.icon(
+            onPressed: () {
+              Share.shareXFiles([XFile(file.path)]);
+            },
+            icon: const Icon(Icons.share),
+            label: const Text('Export CSV'),
+          ),
           TextButton(
             onPressed: () {
               Navigator.pop(context); // Pop dialog
@@ -674,6 +833,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
       _gaitService.stop();
     }
     _gaitService.dispose();
+    _accelRecorder.dispose();
     super.dispose();
   }
 
@@ -717,6 +877,43 @@ class _TrainingScreenState extends State<TrainingScreen> {
                     gaitLabel(_latestGaitReading!.gait),
                     style: TextStyle(color: gaitColor(_latestGaitReading!.gait)),
                   ),
+                ),
+              if (_accelRecorder.isRecording)
+                Builder(
+                  builder: (context) {
+                    final gaitLabel =
+                        gaitLabelFromIntervalName(currentInterval.name);
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SizedBox(height: 8),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.fiber_manual_record,
+                              color: gaitLabel != null ? Colors.red : Colors.grey,
+                              size: 12,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              gaitLabel != null
+                                  ? 'Recording: $gaitLabel'
+                                  : 'Recording paused',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(
+                                    color: gaitLabel != null
+                                        ? Colors.red
+                                        : Colors.grey,
+                                  ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    );
+                  },
                 ),
               const SizedBox(height: 24),
               Row(

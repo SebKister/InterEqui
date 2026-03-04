@@ -138,3 +138,13 @@ String gaitLabel(GaitType gait) {
     case GaitType.unknown: return '...';
   }
 }
+
+/// Extracts a gait label from an interval name for data collection.
+/// Returns null if the interval name doesn't contain a recognized gait.
+String? gaitLabelFromIntervalName(String intervalName) {
+  final lower = intervalName.toLowerCase();
+  if (lower.contains('canter')) return 'canter';
+  if (lower.contains('trot')) return 'trot';
+  if (lower.contains('walk')) return 'walk';
+  return null;
+}
