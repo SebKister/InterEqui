@@ -705,6 +705,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
     _accelRecorder.setLabel(null);
     final confirmed = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (context) => AlertDialog(
         title: const Text('Stop Workout?'),
         content: const Text(
