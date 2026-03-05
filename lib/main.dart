@@ -14,6 +14,7 @@ import 'gait_models.dart';
 import 'gait_service.dart';
 import 'gait_screen.dart';
 import 'accel_recorder.dart';
+import 'recording_data_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -135,23 +136,20 @@ class _PlanListScreenState extends State<PlanListScreen> {
 
   Future<void> _exportPlan(TrainingPlan plan) async {
     final dir = await getApplicationDocumentsDirectory();
-    final safeName = plan.name.replaceAll(RegExp(r'[^\w\s-]'), '').replaceAll(' ', '_');
+    final safeName = plan.name
+        .replaceAll(RegExp(r'[^\w\s-]'), '')
+        .replaceAll(' ', '_');
     final baseName = safeName.isNotEmpty
         ? safeName
         : 'plan_${DateTime.now().millisecondsSinceEpoch}';
     final file = File('${dir.path}/$baseName.json');
     final jsonStr = const JsonEncoder.withIndent('  ').convert(plan.toJson());
     await file.writeAsString(jsonStr);
-    await Share.shareXFiles(
-      [XFile(file.path)],
-      subject: plan.name,
-    );
+    await Share.shareXFiles([XFile(file.path)], subject: plan.name);
   }
 
   Future<void> _importPlan() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.any,
-    );
+    final result = await FilePicker.platform.pickFiles(type: FileType.any);
     if (result == null || result.files.isEmpty) return;
 
     final filePath = result.files.single.path;
@@ -172,14 +170,16 @@ class _PlanListScreenState extends State<PlanListScreen> {
       });
       _savePlans();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Imported "${imported.name}"')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Imported "${imported.name}"')));
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to import plan. Invalid file format.')),
+          const SnackBar(
+            content: Text('Failed to import plan. Invalid file format.'),
+          ),
         );
       }
     }
@@ -221,6 +221,19 @@ class _PlanListScreenState extends State<PlanListScreen> {
         title: const Text('My Training Plans'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.fiber_manual_record),
+            tooltip: 'Record Data',
+            color: Colors.red,
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const RecordingDataScreen(),
+                ),
+              );
+            },
+          ),
+          IconButton(
             icon: const Icon(Icons.file_open),
             tooltip: 'Import Plan',
             onPressed: _importPlan,
@@ -231,7 +244,9 @@ class _PlanListScreenState extends State<PlanListScreen> {
             onPressed: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => const GaitDetectorScreen()),
+                MaterialPageRoute(
+                  builder: (context) => const GaitDetectorScreen(),
+                ),
               );
             },
           ),
@@ -537,7 +552,9 @@ class _PlanEditorScreenState extends State<PlanEditorScreen> {
                   final interval = _intervals[index];
                   return ListTile(
                     title: Text(interval.name),
-                    subtitle: Text(_formatDuration(interval.duration.inSeconds)),
+                    subtitle: Text(
+                      _formatDuration(interval.duration.inSeconds),
+                    ),
                     trailing: IconButton(
                       icon: const Icon(Icons.delete),
                       onPressed: () {
@@ -876,14 +893,17 @@ class _TrainingScreenState extends State<TrainingScreen> {
                   ),
                   label: Text(
                     gaitLabel(_latestGaitReading!.gait),
-                    style: TextStyle(color: gaitColor(_latestGaitReading!.gait)),
+                    style: TextStyle(
+                      color: gaitColor(_latestGaitReading!.gait),
+                    ),
                   ),
                 ),
               if (_accelRecorder.isRecording)
                 Builder(
                   builder: (context) {
-                    final gaitLabel =
-                        gaitLabelFromIntervalName(currentInterval.name);
+                    final gaitLabel = gaitLabelFromIntervalName(
+                      currentInterval.name,
+                    );
                     return Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -893,7 +913,9 @@ class _TrainingScreenState extends State<TrainingScreen> {
                           children: [
                             Icon(
                               Icons.fiber_manual_record,
-                              color: gaitLabel != null ? Colors.red : Colors.grey,
+                              color: gaitLabel != null
+                                  ? Colors.red
+                                  : Colors.grey,
                               size: 12,
                             ),
                             const SizedBox(width: 4),
@@ -901,9 +923,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
                               gaitLabel != null
                                   ? 'Recording: $gaitLabel'
                                   : 'Recording paused',
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodySmall
+                              style: Theme.of(context).textTheme.bodySmall
                                   ?.copyWith(
                                     color: gaitLabel != null
                                         ? Colors.red
