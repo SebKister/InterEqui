@@ -760,6 +760,9 @@ class _TrainingScreenState extends State<TrainingScreen> {
     if (confirmed == true) {
       _localTimer?.cancel();
       FlutterBackgroundService().invoke('stopService');
+
+      await _saveSessionToHistory();
+
       final file = await _accelRecorder.stop();
       if (mounted && file != null) {
         _showExportDialog(file);
@@ -769,13 +772,8 @@ class _TrainingScreenState extends State<TrainingScreen> {
     return confirmed ?? false;
   }
 
-  Future<void> _showCompletionDialog() async {
-    final file = await _accelRecorder.stop();
-    if (!mounted) return;
-
+  Future<void> _saveSessionToHistory() async {
     final duration = DateTime.now().difference(_sessionStartTime);
-
-    // Save history record
     final record = WorkoutRecord(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       title: widget.plan.name,
@@ -785,6 +783,13 @@ class _TrainingScreenState extends State<TrainingScreen> {
       planJson: json.encode(widget.plan.toJson()),
     );
     await HistoryScreen.saveWorkoutRecord(record);
+  }
+
+  Future<void> _showCompletionDialog() async {
+    final file = await _accelRecorder.stop();
+    if (!mounted) return;
+
+    await _saveSessionToHistory();
 
     if (!mounted) return;
 
