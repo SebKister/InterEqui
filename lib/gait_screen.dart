@@ -1,10 +1,13 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'gait_models.dart';
 import 'gait_service.dart';
+import 'models.dart';
+import 'history_screen.dart';
 
 class GaitDetectorScreen extends StatefulWidget {
   const GaitDetectorScreen({super.key});
@@ -79,6 +82,16 @@ class _GaitDetectorScreenState extends State<GaitDetectorScreen> {
     _readingSubscription = null;
     _elapsedTimer?.cancel();
     _elapsedTimer = null;
+
+    final record = WorkoutRecord(
+      id: session.id,
+      title: 'Gait Session',
+      timestamp: session.startTime,
+      duration: session.totalDuration,
+      type: 'gait',
+      planJson: json.encode(session.toJson()),
+    );
+    HistoryScreen.saveWorkoutRecord(record);
 
     Navigator.pushReplacement(
       context,
@@ -174,7 +187,11 @@ class _GaitDetectorScreenState extends State<GaitDetectorScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 32),
               child: Column(
                 children: [
-                  const Icon(Icons.model_training, size: 48, color: Colors.grey),
+                  const Icon(
+                    Icons.model_training,
+                    size: 48,
+                    color: Colors.grey,
+                  ),
                   const SizedBox(height: 12),
                   Text(
                     'No model available yet',
@@ -263,9 +280,11 @@ class _GaitDetectorScreenState extends State<GaitDetectorScreen> {
                   height: 24,
                   child: Row(
                     children: _recentReadings
-                        .map((r) => Expanded(
-                              child: Container(color: gaitColor(r.gait)),
-                            ))
+                        .map(
+                          (r) => Expanded(
+                            child: Container(color: gaitColor(r.gait)),
+                          ),
+                        )
                         .toList(),
                   ),
                 ),
@@ -283,10 +302,7 @@ class _GaitDetectorScreenState extends State<GaitDetectorScreen> {
             label: const Text('Stop'),
             style: FilledButton.styleFrom(
               backgroundColor: Colors.red,
-              padding: const EdgeInsets.symmetric(
-                horizontal: 32,
-                vertical: 16,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
               textStyle: const TextStyle(fontSize: 18),
             ),
           ),
@@ -329,10 +345,11 @@ class GaitSessionSummaryScreen extends StatelessWidget {
       ..writeln();
 
     // Gait breakdown
-    final sorted = session.gaitDurations.entries
-        .where((e) => e.value.inMilliseconds > 0)
-        .toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
+    final sorted =
+        session.gaitDurations.entries
+            .where((e) => e.value.inMilliseconds > 0)
+            .toList()
+          ..sort((a, b) => b.value.compareTo(a.value));
 
     buf.writeln('Gait Breakdown:');
     for (final e in sorted) {
@@ -366,7 +383,9 @@ class GaitSessionSummaryScreen extends StatelessWidget {
         .replaceAll('.', '-');
     final file = File('${dir.path}/gait_session_$ts.txt');
     await file.writeAsString(buf.toString());
-    await Share.shareXFiles([XFile(file.path)], subject: 'Gait Session $dateStr');
+    await Share.shareXFiles([
+      XFile(file.path),
+    ], subject: 'Gait Session $dateStr');
   }
 
   @override
@@ -374,10 +393,11 @@ class GaitSessionSummaryScreen extends StatelessWidget {
     final totalMs = session.totalDuration.inMilliseconds;
 
     // Filter to gaits that actually have duration
-    final gaitEntries = session.gaitDurations.entries
-        .where((e) => e.value.inMilliseconds > 0)
-        .toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
+    final gaitEntries =
+        session.gaitDurations.entries
+            .where((e) => e.value.inMilliseconds > 0)
+            .toList()
+          ..sort((a, b) => b.value.compareTo(a.value));
 
     return Scaffold(
       appBar: AppBar(
@@ -454,10 +474,7 @@ class GaitSessionSummaryScreen extends StatelessWidget {
 
           if (session.transitions.isNotEmpty) ...[
             const Divider(height: 32),
-            Text(
-              'Transitions',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
+            Text('Transitions', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
             ...session.transitions.map((t) {
               final offset = t.timestamp.difference(session.startTime);
@@ -465,9 +482,9 @@ class GaitSessionSummaryScreen extends StatelessWidget {
                 dense: true,
                 leading: Text(
                   _formatTimestamp(offset),
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    fontFamily: 'monospace',
-                  ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(fontFamily: 'monospace'),
                 ),
                 title: Row(
                   mainAxisSize: MainAxisSize.min,

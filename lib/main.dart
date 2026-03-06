@@ -15,6 +15,7 @@ import 'gait_service.dart';
 import 'gait_screen.dart';
 import 'accel_recorder.dart';
 import 'recording_data_screen.dart';
+import 'history_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -220,6 +221,16 @@ class _PlanListScreenState extends State<PlanListScreen> {
       appBar: AppBar(
         title: const Text('My Training Plans'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.history),
+            tooltip: 'Workout History',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const HistoryScreen()),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.fiber_manual_record),
             tooltip: 'Record Data',
@@ -591,6 +602,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
   bool _isPaused = false;
   StreamSubscription? _serviceSubscription;
   Timer? _localTimer;
+  final DateTime _sessionStartTime = DateTime.now();
 
   final GaitService _gaitService = GaitService();
   StreamSubscription<GaitReading>? _gaitSubscription;
@@ -759,6 +771,21 @@ class _TrainingScreenState extends State<TrainingScreen> {
 
   Future<void> _showCompletionDialog() async {
     final file = await _accelRecorder.stop();
+    if (!mounted) return;
+
+    final duration = DateTime.now().difference(_sessionStartTime);
+
+    // Save history record
+    final record = WorkoutRecord(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      title: widget.plan.name,
+      timestamp: _sessionStartTime,
+      duration: duration,
+      type: 'interval',
+      planJson: json.encode(widget.plan.toJson()),
+    );
+    await HistoryScreen.saveWorkoutRecord(record);
+
     if (!mounted) return;
 
     showDialog(

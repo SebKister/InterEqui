@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:intervaller/main.dart';
+import 'package:interequi/main.dart';
 
 void main() {
   testWidgets('Intervaller app smoke test', (WidgetTester tester) async {
