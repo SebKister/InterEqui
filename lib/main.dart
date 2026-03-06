@@ -984,8 +984,9 @@ class _TrainingScreenState extends State<TrainingScreen> {
                   const SizedBox(width: 20),
                   ElevatedButton(
                     onPressed: () async {
-                      if (await _confirmStop()) {
-                        if (mounted) Navigator.pop(context);
+                      final confirmed = await _confirmStop();
+                      if (confirmed && mounted) {
+                        Navigator.pop(context);
                       }
                     },
                     child: const Text('Stop'),
