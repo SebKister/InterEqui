@@ -1,7 +1,14 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:sensors_plus/sensors_plus.dart';
+import 'dart:collection';
 import 'package:path_provider/path_provider.dart';
+
+class _AccelSample {
+  final int timestampMs;
+  final String line;
+  _AccelSample(this.timestampMs, this.line);
+}
 
 class AccelRecorder {
   static const int _sampleRateMs = 10; // ~100 Hz
@@ -13,15 +20,20 @@ class AccelRecorder {
   bool _isRecording = false;
   int _sampleCount = 0;
 
+  Duration _ignoreLast = Duration.zero;
+  final Queue<_AccelSample> _buffer = Queue<_AccelSample>();
+
   bool get isRecording => _isRecording;
   int get sampleCount => _sampleCount;
 
   /// Opens a temporary CSV file and begins streaming samples to it.
-  Future<void> start() async {
+  Future<void> start({Duration ignoreLast = Duration.zero}) async {
     if (_isRecording) return;
     _isRecording = true;
     _sampleCount = 0;
     _currentLabel = null;
+    _ignoreLast = ignoreLast;
+    _buffer.clear();
 
     final dir = await getTemporaryDirectory();
     final ts = DateTime.now().millisecondsSinceEpoch;
@@ -43,14 +55,24 @@ class AccelRecorder {
     if (label == null) return;
 
     final timestampMs = DateTime.now().millisecondsSinceEpoch;
-    _sink?.write(
-      '$timestampMs,'
-      '${event.x.toStringAsFixed(4)},'
-      '${event.y.toStringAsFixed(4)},'
-      '${event.z.toStringAsFixed(4)},'
-      '$label\n',
-    );
-    _sampleCount++;
+    final line =
+        '$timestampMs,'
+        '${event.x.toStringAsFixed(4)},'
+        '${event.y.toStringAsFixed(4)},'
+        '${event.z.toStringAsFixed(4)},'
+        '$label\n';
+
+    if (_ignoreLast > Duration.zero) {
+      _buffer.addLast(_AccelSample(timestampMs, line));
+      final cutoff = timestampMs - _ignoreLast.inMilliseconds;
+      while (_buffer.isNotEmpty && _buffer.first.timestampMs < cutoff) {
+        _sink?.write(_buffer.removeFirst().line);
+        _sampleCount++;
+      }
+    } else {
+      _sink?.write(line);
+      _sampleCount++;
+    }
   }
 
   /// Stops recording and writes a compressed CSV to app documents directory.
@@ -60,6 +82,7 @@ class AccelRecorder {
     _subscription = null;
     _isRecording = false;
     _currentLabel = null;
+    _buffer.clear();
 
     if (_sink != null) {
       await _sink!.flush();
