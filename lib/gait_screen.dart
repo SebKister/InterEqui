@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'gait_models.dart';
@@ -18,11 +19,13 @@ class GaitDetectorScreen extends StatefulWidget {
 
 class _GaitDetectorScreenState extends State<GaitDetectorScreen> {
   final GaitService _gaitService = GaitService();
+  final FlutterTts _tts = FlutterTts();
   StreamSubscription<GaitReading>? _readingSubscription;
 
   bool _isRecording = false;
   bool? _modelAvailable; // null = still loading
   GaitReading? _latestReading;
+  GaitType? _lastAnnouncedGait;
   final List<GaitReading> _recentReadings = [];
   static const int _maxRecentReadings = 30;
   DateTime? _recordingStart;
@@ -53,10 +56,16 @@ class _GaitDetectorScreenState extends State<GaitDetectorScreen> {
       _latestReading = null;
       _recentReadings.clear();
       _elapsed = Duration.zero;
+      _lastAnnouncedGait = null;
     });
 
     _readingSubscription = _gaitService.gaitStream.listen((reading) {
       if (mounted) {
+        if (reading.gait != _lastAnnouncedGait &&
+            reading.gait != GaitType.unknown) {
+          _lastAnnouncedGait = reading.gait;
+          _tts.speak(gaitLabel(reading.gait));
+        }
         setState(() {
           _latestReading = reading;
           _recentReadings.add(reading);
@@ -140,6 +149,7 @@ class _GaitDetectorScreenState extends State<GaitDetectorScreen> {
   void dispose() {
     _readingSubscription?.cancel();
     _elapsedTimer?.cancel();
+    _tts.stop();
     if (_gaitService.isRunning) {
       _gaitService.stop();
     }
@@ -312,9 +322,16 @@ class _GaitDetectorScreenState extends State<GaitDetectorScreen> {
   }
 }
 
-class GaitSessionSummaryScreen extends StatelessWidget {
+class GaitSessionSummaryScreen extends StatefulWidget {
   final GaitSession session;
   const GaitSessionSummaryScreen({super.key, required this.session});
+
+  @override
+  State<GaitSessionSummaryScreen> createState() => _GaitSessionSummaryScreenState();
+}
+
+class _GaitSessionSummaryScreenState extends State<GaitSessionSummaryScreen> {
+  bool _sessionExported = false;
 
   String _formatDuration(Duration d) {
     final m = d.inMinutes;
@@ -329,10 +346,11 @@ class GaitSessionSummaryScreen extends StatelessWidget {
   }
 
   Future<void> _exportSession(BuildContext context) async {
-    final totalMs = session.totalDuration.inMilliseconds;
+    _sessionExported = true;
+    final totalMs = widget.session.totalDuration.inMilliseconds;
 
     // Header
-    final date = session.startTime;
+    final date = widget.session.startTime;
     final dateStr =
         '${date.day.toString().padLeft(2, '0')}/'
         '${date.month.toString().padLeft(2, '0')}/'
@@ -341,12 +359,12 @@ class GaitSessionSummaryScreen extends StatelessWidget {
         '${date.minute.toString().padLeft(2, '0')}';
     final buf = StringBuffer()
       ..writeln('Gait Session — $dateStr')
-      ..writeln('Duration: ${_formatDuration(session.totalDuration)}')
+      ..writeln('Duration: ${_formatDuration(widget.session.totalDuration)}')
       ..writeln();
 
     // Gait breakdown
     final sorted =
-        session.gaitDurations.entries
+        widget.session.gaitDurations.entries
             .where((e) => e.value.inMilliseconds > 0)
             .toList()
           ..sort((a, b) => b.value.compareTo(a.value));
@@ -364,10 +382,10 @@ class GaitSessionSummaryScreen extends StatelessWidget {
     buf.writeln();
 
     // Transitions
-    if (session.transitions.isNotEmpty) {
-      buf.writeln('Transitions (${session.transitions.length}):');
-      for (final t in session.transitions) {
-        final offset = t.timestamp.difference(session.startTime);
+    if (widget.session.transitions.isNotEmpty) {
+      buf.writeln('Transitions (${widget.session.transitions.length}):');
+      for (final t in widget.session.transitions) {
+        final offset = t.timestamp.difference(widget.session.startTime);
         buf.writeln(
           '  ${_formatTimestamp(offset)}  '
           '${gaitLabel(t.fromGait)} → ${gaitLabel(t.toGait)}',
@@ -377,7 +395,7 @@ class GaitSessionSummaryScreen extends StatelessWidget {
 
     // Write file and share
     final dir = await getApplicationDocumentsDirectory();
-    final ts = session.startTime
+    final ts = widget.session.startTime
         .toIso8601String()
         .replaceAll(':', '-')
         .replaceAll('.', '-');
@@ -390,11 +408,11 @@ class GaitSessionSummaryScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final totalMs = session.totalDuration.inMilliseconds;
+    final totalMs = widget.session.totalDuration.inMilliseconds;
 
     // Filter to gaits that actually have duration
     final gaitEntries =
-        session.gaitDurations.entries
+        widget.session.gaitDurations.entries
             .where((e) => e.value.inMilliseconds > 0)
             .toList()
           ..sort((a, b) => b.value.compareTo(a.value));
@@ -416,7 +434,7 @@ class GaitSessionSummaryScreen extends StatelessWidget {
           // Total duration
           Center(
             child: Text(
-              'Total: ${_formatDuration(session.totalDuration)}',
+              'Total: ${_formatDuration(widget.session.totalDuration)}',
               style: Theme.of(context).textTheme.headlineSmall,
             ),
           ),
@@ -472,12 +490,12 @@ class GaitSessionSummaryScreen extends StatelessWidget {
             );
           }),
 
-          if (session.transitions.isNotEmpty) ...[
+          if (widget.session.transitions.isNotEmpty) ...[
             const Divider(height: 32),
             Text('Transitions', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
-            ...session.transitions.map((t) {
-              final offset = t.timestamp.difference(session.startTime);
+            ...widget.session.transitions.map((t) {
+              final offset = t.timestamp.difference(widget.session.startTime);
               return ListTile(
                 dense: true,
                 leading: Text(
@@ -510,7 +528,31 @@ class GaitSessionSummaryScreen extends StatelessWidget {
           const SizedBox(height: 24),
           Center(
             child: FilledButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: () async {
+                if (!_sessionExported) {
+                  final confirm = await showDialog<bool>(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: const Text('Discard session data?'),
+                      content: const Text(
+                        'You haven\'t exported the session data yet. The session will still be saved to your history, but if you want to export the text summary, you should do it now.\n\nAre you sure you want to close this screen?',
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context, false),
+                          child: const Text('Cancel'),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.pop(context, true),
+                          child: const Text('Close', style: TextStyle(color: Colors.red)),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (confirm != true) return;
+                }
+                if (mounted) Navigator.pop(context);
+              },
               child: const Text('Done'),
             ),
           ),

@@ -230,10 +230,49 @@ class _RecordingDataScreenState extends State<RecordingDataScreen> {
     return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
   }
 
+  Future<bool> _showExitConfirmationDialog() async {
+    final shouldExit = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Exit Training Session?'),
+        content: const Text(
+          'You are currently recording data. If you exit now, the recorded data will be discarded. Are you sure you want to exit?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Exit', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    return shouldExit ?? false;
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
+    return PopScope(
+      canPop: _state == _RecordingState.idle,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) {
+          return;
+        }
+        
+        final shouldPop = await _showExitConfirmationDialog();
+        if (shouldPop) {
+          if (mounted) {
+            _timer?.cancel();
+            _accelRecorder.dispose(); // Ensure it gets cleaned up
+            Navigator.of(context).pop();
+          }
+        }
+      },
+      child: Scaffold(
+        appBar: AppBar(
         title: const Text('Record Training Data'),
         actions: [
           if (_speechEnabled)
@@ -356,6 +395,7 @@ class _RecordingDataScreenState extends State<RecordingDataScreen> {
             ],
           ),
         ),
+      ),
       ),
     );
   }

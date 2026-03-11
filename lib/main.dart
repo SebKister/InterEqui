@@ -793,6 +793,8 @@ class _TrainingScreenState extends State<TrainingScreen> {
 
     if (!mounted) return;
 
+    bool dataExported = false;
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -822,15 +824,40 @@ class _TrainingScreenState extends State<TrainingScreen> {
           if (file != null)
             TextButton.icon(
               onPressed: () {
+                dataExported = true;
                 Share.shareXFiles([XFile(file.path)]);
               },
               icon: const Icon(Icons.share),
               label: const Text('Export gzipped CSV'),
             ),
           TextButton(
-            onPressed: () {
-              Navigator.pop(context); // Pop dialog
-              Navigator.pop(context); // Pop training screen
+            onPressed: () async {
+              if (file != null && !dataExported) {
+                final confirm = await showDialog<bool>(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text('Discard training data?'),
+                    content: const Text(
+                      'You haven\'t exported the recorded data yet. If you close this screen now, the CSV file will be lost.\n\nAre you sure you want to discard it?',
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        child: const Text('Cancel'),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        child: const Text('Discard', style: TextStyle(color: Colors.red)),
+                      ),
+                    ],
+                  ),
+                );
+                if (confirm != true) return;
+              }
+              if (mounted) {
+                Navigator.pop(context); // Pop dialog
+                Navigator.pop(context); // Pop training screen
+              }
             },
             child: const Text('Done'),
           ),
@@ -840,6 +867,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
   }
 
   void _showExportDialog(File file) {
+    bool dataExported = false;
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -851,15 +879,40 @@ class _TrainingScreenState extends State<TrainingScreen> {
         actions: [
           TextButton.icon(
             onPressed: () {
+              dataExported = true;
               Share.shareXFiles([XFile(file.path)]);
             },
             icon: const Icon(Icons.share),
             label: const Text('Export CSV'),
           ),
           TextButton(
-            onPressed: () {
-              Navigator.pop(context); // Pop dialog
-              Navigator.pop(context); // Pop training screen
+            onPressed: () async {
+              if (!dataExported) {
+                final confirm = await showDialog<bool>(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text('Discard training data?'),
+                    content: const Text(
+                      'You haven\'t exported the recorded data yet. If you close this screen now, the CSV file will be lost.\n\nAre you sure you want to discard it?',
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        child: const Text('Cancel'),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        child: const Text('Discard', style: TextStyle(color: Colors.red)),
+                      ),
+                    ],
+                  ),
+                );
+                if (confirm != true) return;
+              }
+              if (mounted) {
+                Navigator.pop(context); // Pop dialog
+                Navigator.pop(context); // Pop training screen
+              }
             },
             child: const Text('Done'),
           ),
